@@ -11,6 +11,7 @@ import stripeService from "./stripe.service.js";
 import refundHelper from "../utils/refundHelper.js";
 import trustService from "./trust.service.js";
 import { notifyAdmin } from "../utils/notificationHelper.js";
+import { withPropertyLock } from "../utils/bookingLock.js";
 
 const PLATFORM_FEE_PERCENT = 10;
 
@@ -64,86 +65,91 @@ class BookingService {
       }
     }
 
-    // 1. Availability check (Global or Sub-unit specific)
-    const isAvailable = await this.checkAvailability(propertyId, checkIn, checkOut, subUnitId);
-    if (!isAvailable) throw new Error("Dates are no longer available for this unit");
+    // Serialise availability check + creation per property via a distributed lock
+    // so two concurrent requests for the same dates can't both pass the overlap
+    // check and double-book. The DB-level overlap guard remains the safety net.
+    return await withPropertyLock(propertyId, async () => {
+      // 1. Availability check (Global or Sub-unit specific)
+      const isAvailable = await this.checkAvailability(propertyId, checkIn, checkOut, subUnitId);
+      if (!isAvailable) throw new Error("Dates are no longer available for this unit");
 
-    // 2. Pricing calculation (Securely computed server-side)
-    const stayDays = Math.max(1, Math.ceil((new Date(checkOut) - new Date(checkIn)) / 86400000));
-    
-    // Calculate base accommodation price
-    const { total: accommodationPrice, rateType } = this.computeAccommodationPrice(property, stayDays, subUnitId);
-    
-    // Calculate add-ons total
-    const { total: addOnsTotal, processedAddOns } = this.calculateAddOnsTotal(property, selectedAddOns, stayDays);
+      // 2. Pricing calculation (Securely computed server-side)
+      const stayDays = Math.max(1, Math.ceil((new Date(checkOut) - new Date(checkIn)) / 86400000));
 
-    // Homemade Food Price (Optional Service)
-    const homemadeFoodPrice = (homemadeFoodSelected && property.foodServices?.available)
-      ? (property.foodServices.price || 0)
-      : 0;
+      // Calculate base accommodation price
+      const { total: accommodationPrice, rateType } = this.computeAccommodationPrice(property, stayDays, subUnitId);
 
-    // Pre-ordered meal plan: resolve each selected FoodMenu item server-side.
-    // Only items that actually belong to this property are honoured; each meal
-    // is charged once per night of the stay (foodprice × stayDays).
-    const { mealSelection, mealTotal } = await this.resolveMealSelection(
-      { breakfastId, lunchId, dinnerId },
-      propertyId,
-      stayDays
-    );
+      // Calculate add-ons total
+      const { total: addOnsTotal, processedAddOns } = this.calculateAddOnsTotal(property, selectedAddOns, stayDays);
 
-    const grandTotal = accommodationPrice + addOnsTotal + homemadeFoodPrice + mealTotal;
+      // Homemade Food Price (Optional Service)
+      const homemadeFoodPrice = (homemadeFoodSelected && property.foodServices?.available)
+        ? (property.foodServices.price || 0)
+        : 0;
 
-    // 3. Trust Engine Analysis (Risk Assessment)
-    const { requiresSecurityDeposit, riskScore } = await trustService.analyzeBookingRisk(userId, property);
+      // Pre-ordered meal plan: resolve each selected FoodMenu item server-side.
+      // Only items that actually belong to this property are honoured; each meal
+      // is charged once per night of the stay (foodprice × stayDays).
+      const { mealSelection, mealTotal } = await this.resolveMealSelection(
+        { breakfastId, lunchId, dinnerId },
+        propertyId,
+        stayDays
+      );
 
-    // 4. Create the booking record
-    const booking = await BookingModel.create({
-      propertyId,
-      subUnitId,
-      userId,
-      checkIn,
-      checkOut,
-      stayDays,
-      stayType: rateType,
-      totalPrice: grandTotal,
-      selectedAddOns: processedAddOns,
-      paymentMethod,
-      requiresSecurityDeposit,
-      riskScore,
-      damageDepositStatus: property.damagePolicy?.depositRequired ? 'held' : 'none',
-      homemadeFoodSelected: !!homemadeFoodSelected,
-      ...mealSelection,
-    });
+      const grandTotal = accommodationPrice + addOnsTotal + homemadeFoodPrice + mealTotal;
 
-    if (grandTotal >= HIGH_VALUE_BOOKING_THRESHOLD) {
-      notifyAdmin('booking:highvalue', {
-        title: 'High-Value Booking',
-        message: `New booking of PKR ${grandTotal.toLocaleString()} for "${property.name}".`,
-        type: 'booking',
-        severity: 'info',
-        link: `/admin/bookings/${booking._id}`,
-        bookingId: booking._id,
-        propertyId: property._id,
-      }, 'notifyHighValueBookings').catch((e) => console.error('[notifyAdmin:booking:highvalue]', e));
-    }
+      // 3. Trust Engine Analysis (Risk Assessment)
+      const { requiresSecurityDeposit, riskScore } = await trustService.analyzeBookingRisk(userId, property);
 
-    // 5. Payment handling (Stripe)
-    if (paymentMethod === 'stripe') {
-      const session = await stripeService.createCheckoutSession({
-        bookingId: booking._id,
+      // 4. Create the booking record
+      const booking = await BookingModel.create({
+        propertyId,
+        subUnitId,
         userId,
-        property,
         checkIn,
         checkOut,
         stayDays,
-        totalPrice: booking.totalPrice
+        stayType: rateType,
+        totalPrice: grandTotal,
+        selectedAddOns: processedAddOns,
+        paymentMethod,
+        requiresSecurityDeposit,
+        riskScore,
+        damageDepositStatus: property.damagePolicy?.depositRequired ? 'held' : 'none',
+        homemadeFoodSelected: !!homemadeFoodSelected,
+        ...mealSelection,
       });
-      booking.stripeSessionId = session.id;
-      await booking.save();
-      return { booking, session };
-    }
 
-    return { booking };
+      if (grandTotal >= HIGH_VALUE_BOOKING_THRESHOLD) {
+        notifyAdmin('booking:highvalue', {
+          title: 'High-Value Booking',
+          message: `New booking of PKR ${grandTotal.toLocaleString()} for "${property.name}".`,
+          type: 'booking',
+          severity: 'info',
+          link: `/admin/bookings/${booking._id}`,
+          bookingId: booking._id,
+          propertyId: property._id,
+        }, 'notifyHighValueBookings').catch((e) => console.error('[notifyAdmin:booking:highvalue]', e));
+      }
+
+      // 5. Payment handling (Stripe)
+      if (paymentMethod === 'stripe') {
+        const session = await stripeService.createCheckoutSession({
+          bookingId: booking._id,
+          userId,
+          property,
+          checkIn,
+          checkOut,
+          stayDays,
+          totalPrice: booking.totalPrice
+        });
+        booking.stripeSessionId = session.id;
+        await booking.save();
+        return { booking, session };
+      }
+
+      return { booking };
+    });
   }
 
   /**

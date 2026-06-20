@@ -152,9 +152,11 @@ const normalizeExtractedData = (data = {}) => {
     cnicNumber: data.cnicNumber || data.cnic_number || null,
     fullName: data.fullName || data.full_name || null,
     fatherName: data.fatherName || data.father_name || null,
-    dateOfBirth: data.dob || data.dateOfBirth || data.date_of_birth || null,
+    dateOfBirth: data.dateOfBirth || data.date_of_birth || data.dob || null,
     gender: data.gender || null,
     address: data.address || null,
+    issueDate: data.issueDate || data.issue_date || null,
+    expiryDate: data.expiryDate || data.expiry_date || null,
     confidence: data.confidence || 0,
     rawText: data.rawText || data.raw_text || '',
   };
@@ -431,6 +433,8 @@ const extractCnicData = async (req, res) => {
       dateOfBirth: extracted.dateOfBirth,
       gender: extracted.gender,
       address: extracted.address,
+      issueDate: extracted.issueDate,
+      expiryDate: extracted.expiryDate,
       confidence: extracted.confidence,
       // Preserve existing scores and audit fields
       faceMatchScore: user.cnicData?.faceMatchScore ?? null,
@@ -638,6 +642,8 @@ const fullKycVerification = async (req, res) => {
           dateOfBirth: extracted.dateOfBirth,
           gender: extracted.gender,
           address: extracted.address,
+          issueDate: extracted.issueDate,
+          expiryDate: extracted.expiryDate,
           confidence: extracted.confidence,
           verifiedAt: new Date(),
           // Preserve audit trail if set by a previous admin review
@@ -809,6 +815,8 @@ const resubmitVerification = async (req, res) => {
         dateOfBirth: extracted.dateOfBirth,
         gender:      extracted.gender,
         address:     extracted.address,
+        issueDate:   extracted.issueDate,
+        expiryDate:  extracted.expiryDate,
         confidence:  extracted.confidence,
         verifiedAt:  new Date(),
       };

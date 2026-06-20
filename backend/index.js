@@ -29,6 +29,9 @@ import {
 import {
   connectDB
 } from './config/Db.js';
+import {
+  checkHealth as checkVerificationHealth
+} from './utils/verificationService.js';
 import initCronJobs from './utils/cron.js';
 import dotenv from 'dotenv';
 
@@ -242,10 +245,19 @@ app.use((err, req, res, next) => {
 /**
  * Connect to database and start the server
  */
-connectDB().then(() => {
+connectDB().then(async () => {
   if (!process.env.ADMIN_PIN) {
     console.warn('[Security] ADMIN_PIN is not set in .env — the default "000000" is active. Set a strong PIN before deploying to production.');
   }
+
+  // Connectivity check for Python KYC microservice
+  const vHealth = await checkVerificationHealth();
+  if (vHealth.reachable) {
+    console.log(`[Verification] Service reachable (Status: ${vHealth.status}, Providers: ${vHealth.providers})`);
+  } else {
+    console.warn(`[Verification] Service UNREACHABLE: ${vHealth.error} — identity verification features will fail.`);
+  }
+
   server.listen(PORT, () => {
     console.log(`✅ Server running on port ${PORT}`);
     console.log('[Socket.io] Real-time ready');

@@ -117,4 +117,28 @@ const verifyLiveness = async ({ selfie_url }) => {
   return response.data;
 };
 
-export { verifyCnic, verifyFaceMatch, verifyLiveness };
+/**
+ * Pings the Python service's /health endpoint to confirm connectivity.
+ * Uses a short timeout and no retries — this is a fast liveness probe meant
+ * to run once at startup, not a request that should block boot for ~50s.
+ * @returns {Promise<{reachable: boolean, status?: string, providers?: string, error?: string}>}
+ *   On success: `reachable: true` plus the service's reported status/providers.
+ *   On failure: `reachable: false` plus a short error message (never throws).
+ */
+const checkHealth = async () => {
+  try {
+    const response = await axios.get(`${PYTHON_URL}/health`, { timeout: 5000 });
+    return {
+      reachable: true,
+      status: response.data?.status ?? 'unknown',
+      providers: response.data?.providers ?? 'unknown',
+    };
+  } catch (error) {
+    return {
+      reachable: false,
+      error: error?.code || error?.message || 'Unknown error',
+    };
+  }
+};
+
+export { verifyCnic, verifyFaceMatch, verifyLiveness, checkHealth };
