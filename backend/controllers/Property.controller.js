@@ -3,6 +3,7 @@
  * @description Handles property listings, updates, deletions, and search functionality.
  */
 
+import fs from "fs";
 import PropertyModel from "../models/PropertyModel.js";
 import BookingModel from "../models/BookingModel.js";
 import cloudinary from "../middlewares/cloudinary.js";
@@ -11,6 +12,19 @@ import redis from "../config/redis.js";
 const ACTIVE_STATUSES = ['pending', 'confirmed', 'staying'];
 
 // Section: Helper Functions
+
+/**
+ * Deletes a temporary file from the local file system.
+ * @param {string} tempFilePath - The path to the temporary file.
+ */
+const unlinkTempFile = (tempFilePath) => {
+  if (!tempFilePath) return;
+  fs.unlink(tempFilePath, (err) => {
+    if (err && err.code !== 'ENOENT') {
+      console.warn(`[PropertyController] Could not delete temp file ${tempFilePath}:`, err.message);
+    }
+  });
+};
 
 const parsePricingFields = (body, basePrice) => {
   const price = Number(basePrice) || 0;
@@ -126,10 +140,14 @@ export const addProperty = async (req, res) => {
 
     let imageUrls = [];
     if (req.files?.images) {
-      let images = Array.isArray(req.files.images) ? req.files.images : [req.files.images];
-      const uploads = images.map(img => cloudinary.uploader.upload(img.tempFilePath, { folder: "BookVibe-Property" }));
-      const results = await Promise.all(uploads);
-      imageUrls = results.map(img => ({ public_id: img.public_id, url: img.secure_url }));
+      const images = Array.isArray(req.files.images) ? req.files.images : [req.files.images];
+      try {
+        const uploads = images.map(img => cloudinary.uploader.upload(img.tempFilePath, { folder: "BookVibe-Property" }));
+        const results = await Promise.all(uploads);
+        imageUrls = results.map(img => ({ public_id: img.public_id, url: img.secure_url }));
+      } finally {
+        images.forEach(img => unlinkTempFile(img.tempFilePath));
+      }
     }
 
     // Parse Complex Fields
@@ -143,10 +161,14 @@ export const addProperty = async (req, res) => {
       for (let i = 0; i < subUnits.length; i++) {
         const fileKey = `subunit_images_${i}`;
         if (req.files?.[fileKey]) {
-          let unitFiles = Array.isArray(req.files[fileKey]) ? req.files[fileKey] : [req.files[fileKey]];
-          const unitUploads = unitFiles.map(img => cloudinary.uploader.upload(img.tempFilePath, { folder: "BookVibe-Property-Units" }));
-          const unitResults = await Promise.all(unitUploads);
-          subUnits[i].images = unitResults.map(img => ({ public_id: img.public_id, url: img.secure_url }));
+          const unitFiles = Array.isArray(req.files[fileKey]) ? req.files[fileKey] : [req.files[fileKey]];
+          try {
+            const unitUploads = unitFiles.map(img => cloudinary.uploader.upload(img.tempFilePath, { folder: "BookVibe-Property-Units" }));
+            const unitResults = await Promise.all(unitUploads);
+            subUnits[i].images = unitResults.map(img => ({ public_id: img.public_id, url: img.secure_url }));
+          } finally {
+            unitFiles.forEach(img => unlinkTempFile(img.tempFilePath));
+          }
         }
       }
     }
@@ -250,11 +272,15 @@ export const updateProperty = async (req, res) => {
             const unitImages = (parsedSubUnits[i].images || []).filter(img => img.url);
 
             if (req.files?.[fileKey]) {
-              let unitFiles = Array.isArray(req.files[fileKey]) ? req.files[fileKey] : [req.files[fileKey]];
-              const unitUploads = unitFiles.map(img => cloudinary.uploader.upload(img.tempFilePath, { folder: "BookVibe-Property-Units" }));
-              const unitResults = await Promise.all(unitUploads);
-              const newUnitImages = unitResults.map(img => ({ public_id: img.public_id, url: img.secure_url }));
-              unitImages.push(...newUnitImages);
+              const unitFiles = Array.isArray(req.files[fileKey]) ? req.files[fileKey] : [req.files[fileKey]];
+              try {
+                const unitUploads = unitFiles.map(img => cloudinary.uploader.upload(img.tempFilePath, { folder: "BookVibe-Property-Units" }));
+                const unitResults = await Promise.all(unitUploads);
+                const newUnitImages = unitResults.map(img => ({ public_id: img.public_id, url: img.secure_url }));
+                unitImages.push(...newUnitImages);
+              } finally {
+                unitFiles.forEach(img => unlinkTempFile(img.tempFilePath));
+              }
             }
             
             parsedSubUnits[i].images = unitImages;
@@ -292,8 +318,12 @@ export const updateProperty = async (req, res) => {
     let newImageUrls = [];
     if (req.files?.images) {
       const imgs = Array.isArray(req.files.images) ? req.files.images : [req.files.images];
-      const results = await Promise.all(imgs.map(img => cloudinary.uploader.upload(img.tempFilePath, { folder: "BookVibe-Property" })));
-      newImageUrls = results.map(img => ({ public_id: img.public_id, url: img.secure_url }));
+      try {
+        const results = await Promise.all(imgs.map(img => cloudinary.uploader.upload(img.tempFilePath, { folder: "BookVibe-Property" })));
+        newImageUrls = results.map(img => ({ public_id: img.public_id, url: img.secure_url }));
+      } finally {
+        imgs.forEach(img => unlinkTempFile(img.tempFilePath));
+      }
     }
 
     if (keptImages.length > 0 || newImageUrls.length > 0) {
