@@ -117,4 +117,25 @@ const verifyLiveness = async ({ selfie_url }) => {
   return response.data;
 };
 
-export { verifyCnic, verifyFaceMatch, verifyLiveness };
+/**
+ * Pings the Python verification service health endpoint.
+ * @returns {Promise<Object>} Health status
+ */
+const checkHealth = async () => {
+  try {
+    const response = await axios.get(`${PYTHON_URL}/health`, { timeout: 5000 });
+    return {
+      reachable: true,
+      status: response.data?.status || 'unknown',
+      providers: response.data?.providers || 'unknown',
+    };
+  } catch (error) {
+    return {
+      reachable: false,
+      error: error.message,
+      code: error.code || 'UNKNOWN',
+    };
+  }
+};
+
+export { verifyCnic, verifyFaceMatch, verifyLiveness, checkHealth };
