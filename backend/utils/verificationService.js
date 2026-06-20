@@ -1,0 +1,120 @@
+/**
+ * @fileoverview Utility for interacting with the Python verification microservice
+ * @module utils/verificationService
+ */
+
+import axios from 'axios';
+
+const PYTHON_URL = process.env.PYTHON_VERIFICATION_URL || process.env.PYTHON_VERIFY_URL || 'http://localhost:5001';
+const TIMEOUT = 15000; // 15 s per attempt — hard cap prevents event-loop stall
+const MAX_RETRIES = 2; // Total 3 attempts (1 + 2 retries) — worst case: 3×15s + 2×4s = 53s
+const RETRY_DELAY = 4000; // 4 s — gives Cloudinary CDN propagation time
+
+/* -------------------------------------------------------------------------- */
+/*                                Retry Logic                                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Determines if an error from the verification service is retriable
+ * @param {Error} error - The error object
+ * @returns {boolean} True if the error is retriable
+ */
+const isRetriableError = (error) => {
+  // Network/connection errors (DNS, timeout, etc.)
+  const code = error?.code;
+  if (
+    code === 'ECONNREFUSED' ||
+    code === 'ETIMEDOUT' ||
+    code === 'ECONNABORTED' ||
+    code === 'ENOTFOUND' ||
+    code === 'ECONNRESET' ||
+    code === 'EAI_AGAIN'
+  ) return true;
+
+  // Python returned 400 because it couldn't download image from Cloudinary
+  const detail = error?.response?.data?.detail || '';
+  if (error?.response?.status === 400) {
+    if (detail.includes('Image download failed')) return true;
+    if (detail.includes('404')) return true;
+    if (detail.includes('NameResolution')) return true;
+    if (detail.includes('Connection')) return true;
+    if (detail.includes('timed out')) return true;
+  }
+
+  return false;
+};
+
+/**
+ * Wrapper for API calls with automatic retry logic
+ * @param {Function} fn - The async function to execute
+ * @param {string} label - Label for logging
+ * @returns {Promise<any>} Response from the function
+ */
+const callWithRetry = async (fn, label = 'Verification') => {
+  let lastError = null;
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+
+      if (!isRetriableError(error) || attempt === MAX_RETRIES) {
+        throw error;
+      }
+
+      await new Promise(r => setTimeout(r, RETRY_DELAY));
+    }
+  }
+
+  throw lastError;
+};
+
+/* -------------------------------------------------------------------------- */
+/*                                Verification API                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Extracts data from a CNIC image using OCR
+ * @param {Object} params - Parameters object
+ * @param {string} params.image_url - URL of the CNIC image
+ * @returns {Promise<Object>} Extracted OCR data
+ */
+const verifyCnic = async ({ image_url }) => {
+  const response = await callWithRetry(
+    () => axios.post(`${PYTHON_URL}/verify-cnic`, { image_url }, { timeout: TIMEOUT }),
+    'OCR'
+  );
+  return response.data;
+};
+
+/**
+ * Matches a selfie image against a CNIC image
+ * @param {Object} params - Parameters object
+ * @param {string} params.selfie_url - URL of the selfie image
+ * @param {string} params.cnic_url - URL of the CNIC image
+ * @returns {Promise<Object>} Face match results
+ */
+const verifyFaceMatch = async ({ selfie_url, cnic_url }) => {
+  const response = await callWithRetry(
+    () => axios.post(`${PYTHON_URL}/face-match`, { selfie_url, cnic_url }, { timeout: TIMEOUT }),
+    'FaceMatch'
+  );
+  return response.data;
+};
+
+/**
+ * Performs a liveness check on a selfie image
+ * @param {Object} params - Parameters object
+ * @param {string} params.selfie_url - URL of the selfie image
+ * @returns {Promise<Object>} Liveness check results
+ */
+const verifyLiveness = async ({ selfie_url }) => {
+  const response = await callWithRetry(
+    () => axios.post(`${PYTHON_URL}/liveness-check`, { selfie_url }, { timeout: TIMEOUT }),
+    'Liveness'
+  );
+  return response.data;
+};
+
+export { verifyCnic, verifyFaceMatch, verifyLiveness };
