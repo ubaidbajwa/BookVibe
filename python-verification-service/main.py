@@ -8,7 +8,7 @@ from typing import Any, Dict
 from config import settings
 from providers import (
     OCRProvider, FaceMatchingProvider,
-    GoogleVisionOCRProvider, AwsRekognitionProvider, MockKycProvider
+    GoogleVisionOCRProvider, AwsRekognitionProvider
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -32,25 +32,21 @@ app.add_middleware(
 
 def get_ocr_provider() -> OCRProvider:
     """
-    Factory function to retrieve the configured OCR provider.
+    Factory function to retrieve the OCR provider (Google Cloud Vision).
 
     Returns:
-        OCRProvider: An instance of either a mock or production OCR provider.
+        OCRProvider: The production OCR provider instance.
     """
-    if settings.USE_MOCK_PROVIDERS:
-        return MockKycProvider()
     return GoogleVisionOCRProvider()
 
 
 def get_face_provider() -> FaceMatchingProvider:
     """
-    Factory function to retrieve the configured face matching provider.
+    Factory function to retrieve the face matching provider (AWS Rekognition).
 
     Returns:
-        FaceMatchingProvider: An instance of either a mock or production face provider.
+        FaceMatchingProvider: The production face provider instance.
     """
-    if settings.USE_MOCK_PROVIDERS:
-        return MockKycProvider()
     return AwsRekognitionProvider()
 
 
@@ -182,7 +178,7 @@ async def health():
     """
     return {
         "status": "healthy",
-        "providers": "mock" if settings.USE_MOCK_PROVIDERS else "production",
+        "providers": "production",
         "allowed_origins": _allowed_origins,
     }
 

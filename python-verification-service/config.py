@@ -13,7 +13,6 @@ class Settings(BaseSettings):
         AWS_SECRET_ACCESS_KEY (Optional[str]): AWS secret key for Rekognition.
         AWS_REGION (str): AWS region for Rekognition.
         GOOGLE_APPLICATION_CREDENTIALS (Optional[str]): Path to Google Cloud credentials JSON.
-        USE_MOCK_PROVIDERS (bool): Whether to use mock providers instead of real APIs.
         THRESHOLD_APPROVED (float): Confidence score required for auto-approval.
         THRESHOLD_REJECTED (float): Confidence score below which verification is rejected.
         ALLOWED_ORIGINS (str): Comma-separated list of allowed CORS origins.
@@ -26,10 +25,6 @@ class Settings(BaseSettings):
 
     # Google Cloud Credentials
     GOOGLE_APPLICATION_CREDENTIALS: Optional[str] = None
-
-    # Provider Toggles (for local testing/mocking)
-    # Pydantic 2.x handles strings like "True", "true", "1", "on" as True
-    USE_MOCK_PROVIDERS: bool = True
 
     # Decision Thresholds
     THRESHOLD_APPROVED: float = 85.0

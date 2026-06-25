@@ -26,8 +26,6 @@ services:
     restart: unless-stopped
     expose:
       - "5001"                       # reachable only inside the compose network
-    volumes:
-      - deepface_weights:/root/.deepface   # cache ML model weights across restarts
 
   # ---- Node backend (internal only; reached via Nginx) ----
   backend:
@@ -62,6 +60,3 @@ services:
     ports:
       - "80:80"
       # - "443:443"   # enable once TLS is configured (see DOCKER.md)
-
-volumes:
-  deepface_weights:
