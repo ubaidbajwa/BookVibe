@@ -13,6 +13,7 @@
 ![Stripe](https://img.shields.io/badge/Payments-Stripe-635BFF?logo=stripe&logoColor=white)
 ![Socket.io](https://img.shields.io/badge/Realtime-Socket.io-010101?logo=socket.io&logoColor=white)
 ![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-v4-06B6D4?logo=tailwindcss&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)
 
 </div>
 
@@ -178,6 +179,37 @@ VITE_ADMIN_PATH=your-secret-admin-path
 
 ---
 
+## 🐳 Docker Deployment
+
+All three services are containerized and orchestrated with **Docker Compose** for single-host (e.g. AWS EC2) deployment. **Nginx** serves the React build and reverse-proxies `/api` and `/socket.io` to the backend, so the whole stack runs behind a single port.
+
+```
+Internet ──:80──> Nginx (frontend) ──/api──────────┐
+                                   ──/socket.io──> backend:3000 ──> verification:5001
+```
+
+| Container | Image | Role |
+|-----------|-------|------|
+| `frontend` | Nginx | Serves the SPA + reverse-proxies the backend |
+| `backend` | Node 20 | REST API, Socket.io, Stripe webhook |
+| `verification` | Python 3.11 + FastAPI | CNIC OCR / face match / liveness |
+
+MongoDB (Atlas), Cloudinary, and Stripe remain external services.
+
+```bash
+# from the project root
+cp .env.example .env          # set VITE_ADMIN_PATH (frontend build arg)
+# ensure backend/.env and python-verification-service/.env exist
+
+docker compose build          # first build is slow (Python/TensorFlow image)
+docker compose up -d          # start the full stack
+docker compose logs -f        # tail logs
+```
+
+Open **http://localhost** (or your server's IP). For production env values, the Stripe webhook setup, HTTPS/TLS, and full AWS EC2 steps, see **[`DOCKER.md`](./DOCKER.md)**.
+
+---
+
 ## 📂 Project Structure
 
 ```
@@ -189,9 +221,12 @@ BookVibe/
 │   ├── services/               # Business logic (booking, payment, notifications)
 │   ├── middlewares/            # Auth, admin gate, Cloudinary, email templates
 │   ├── config/                 # Socket.io & Redis setup
+│   ├── Dockerfile              # Backend container image
 │   └── index.js                # App entry point
 │
 ├── frontend/                   # React 19 + Vite SPA
+│   ├── Dockerfile              # Multi-stage build → served by Nginx
+│   ├── nginx.conf              # SPA + reverse proxy to the backend
 │   └── src/
 │       ├── pages/              # Guest, host/, and admin/ pages
 │       ├── components/         # Shared UI + providers
@@ -199,7 +234,11 @@ BookVibe/
 │       ├── hooks/              # useSocket and others
 │       └── utils/              # Axios config, pricing, helpers
 │
-└── python-verification-service/  # FastAPI CNIC OCR / face match / liveness
+├── python-verification-service/  # FastAPI CNIC OCR / face match / liveness
+│   └── Dockerfile              # Verification service container image
+│
+├── docker-compose.yml          # Orchestrates all three services
+└── DOCKER.md                   # Docker & AWS deployment guide
 ```
 
 ---
