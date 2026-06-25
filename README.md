@@ -67,7 +67,7 @@ The platform is composed of **three independent services** that communicate over
 - **Dual-token authentication** — short-lived access tokens (15 min) + long-lived refresh tokens (7 days, stored as SHA-256 hashes) with transparent silent refresh.
 - **Secure payments** — Stripe Checkout with **signature-verified webhooks**, atomic idempotency, and a server-side verification fallback. Prices are **always recomputed server-side** — the client can never set its own total.
 - **Real-time everything** — Socket.io rooms per user/host/admin deliver live notifications, plus **Web Push** (VAPID) for delivery even when the site is closed.
-- **AI identity verification** — the FastAPI microservice extracts CNIC fields (number, name, father's name, gender, DOB, address), matches the selfie against the CNIC photo, and runs liveness detection, feeding a **trust score**.
+- **AI identity verification** — the FastAPI microservice extracts CNIC fields (number, name, father's name, gender, DOB, address) via **Google Cloud Vision**, matches the face against the CNIC photo via **AWS Rekognition**, and runs **Amazon Rekognition Face Liveness** (an interactive video challenge — the verified-live frame becomes the selfie that's matched to the CNIC), feeding a **trust score**.
 - **Trust & safety** — risk-based security deposits, a permanent blacklist, and host/guest CNIC snapshots captured at booking time.
 
 ---
@@ -175,6 +175,10 @@ VAPID_SUBJECT=mailto:admin@example.com
 ```env
 VITE_API_URL=http://localhost:3000/api/v1
 VITE_ADMIN_PATH=your-secret-admin-path
+
+# AWS Face Liveness (browser) — see AWS_FACE_LIVENESS_SETUP.md
+VITE_AWS_REGION=us-east-1
+VITE_COGNITO_IDENTITY_POOL_ID=us-east-1:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 ```
 
 ---

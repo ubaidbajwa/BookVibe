@@ -52,7 +52,9 @@ services:
       args:
         VITE_API_URL: /api/v1
         VITE_SOCKET_URL: ""
-        VITE_ADMIN_PATH: ${VITE_ADMIN_PATH}   # from the root .env file
+        VITE_ADMIN_PATH: ${VITE_ADMIN_PATH}                          # from the root .env file
+        VITE_AWS_REGION: ${VITE_AWS_REGION}                          # AWS Face Liveness region
+        VITE_COGNITO_IDENTITY_POOL_ID: ${VITE_COGNITO_IDENTITY_POOL_ID}  # browser AWS creds
     image: bookvibe-frontend
     depends_on:
       - backend

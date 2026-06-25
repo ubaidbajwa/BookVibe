@@ -55,18 +55,24 @@ ALLOWED_ORIGINS=http://backend:3000,http://localhost:3000
 GOOGLE_APPLICATION_CREDENTIALS=/app/gcp-credentials.json   # mount the JSON into the container
 AWS_ACCESS_KEY_ID=...
 AWS_SECRET_ACCESS_KEY=...
-AWS_REGION=us-east-1
+AWS_REGION=us-east-1          # must be a Face-Liveness-supported region
 ```
 > Without valid creds the KYC endpoints return HTTP 503 (by design — no mock fallback).
+> The IAM user also needs `CreateFaceLivenessSession` / `GetFaceLivenessSessionResults`
+> for AWS Face Liveness — see **[`AWS_FACE_LIVENESS_SETUP.md`](./AWS_FACE_LIVENESS_SETUP.md)**.
 
 ### c) `.env` at the project root (CREATE THIS — used by compose for the frontend build)
 ```
 cp .env.example .env
 ```
-Then set the secret admin path segment:
+Then set the admin path segment and the AWS Face Liveness values:
 ```
 VITE_ADMIN_PATH=ctrl-bv5ap6
+VITE_AWS_REGION=us-east-1
+VITE_COGNITO_IDENTITY_POOL_ID=us-east-1:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 ```
+> The Cognito Identity Pool gives the browser temporary AWS creds for the live
+> video challenge. Full walkthrough: **[`AWS_FACE_LIVENESS_SETUP.md`](./AWS_FACE_LIVENESS_SETUP.md)**.
 
 ---
 
