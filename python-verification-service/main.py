@@ -84,6 +84,16 @@ class LivenessRequest(BaseModel):
     selfie_url: str
 
 
+class LivenessSessionResultRequest(BaseModel):
+    """
+    Model for fetching Face Liveness session results.
+
+    Attributes:
+        session_id (str): The Rekognition Face Liveness session id.
+    """
+    session_id: str
+
+
 # --- Helpers ---
 
 async def download_image(url: str) -> bytes:
@@ -286,6 +296,72 @@ async def liveness_check(req: LivenessRequest):
         "is_live": result.get("is_live", False),
         "status": calculate_status(confidence),
         "confidence": confidence,
+    }
+
+
+@app.post("/liveness/create-session")
+async def create_liveness_session():
+    """
+    Creates an Amazon Rekognition Face Liveness session.
+
+    The browser's Amplify FaceLivenessDetector streams the video challenge
+    directly to AWS using the returned session id.
+
+    Returns:
+        Dict[str, Any]: The created session id and the AWS region to stream to.
+    """
+    face_provider = get_face_provider()
+    try:
+        session_id = face_provider.create_liveness_session()
+    except RuntimeError as e:
+        logger.error(f"Provider configuration error: {e}")
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to create liveness session: {e}")
+        raise HTTPException(status_code=502, detail="Could not create liveness session")
+
+    return {
+        "success": True,
+        "session_id": session_id,
+        "region": settings.AWS_REGION,
+    }
+
+
+@app.post("/liveness/session-result")
+async def liveness_session_result(req: LivenessSessionResultRequest):
+    """
+    Fetches the result of a completed Face Liveness session.
+
+    Args:
+        req (LivenessSessionResultRequest): Contains the session id.
+
+    Returns:
+        Dict[str, Any]: Liveness decision, confidence, and the captured live
+        reference image (base64) so the caller can reuse it as the selfie.
+    """
+    import base64
+
+    face_provider = get_face_provider()
+    try:
+        result = face_provider.get_liveness_session_results(req.session_id)
+    except RuntimeError as e:
+        logger.error(f"Provider configuration error: {e}")
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to fetch liveness results: {e}")
+        raise HTTPException(status_code=502, detail="Could not fetch liveness results")
+
+    image_bytes = result.get("reference_image_bytes")
+    reference_image_base64 = (
+        base64.b64encode(image_bytes).decode("utf-8") if image_bytes else None
+    )
+
+    return {
+        "success": True,
+        "is_live": result["is_live"],
+        "status": result["status"],
+        "confidence": result["confidence"],
+        "reference_image_base64": reference_image_base64,
     }
 
 

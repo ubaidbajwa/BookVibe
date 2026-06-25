@@ -4,7 +4,9 @@ import cloudinary from '../middlewares/cloudinary.js';
 import {
   verifyCnic,
   verifyFaceMatch,
-  verifyLiveness
+  verifyLiveness,
+  createLivenessSession as createLivenessSessionSvc,
+  getLivenessSessionResults
 } from '../utils/verificationService.js';
 import {
   recalculateTrustScore
@@ -377,6 +379,97 @@ const previewLiveness = async (req, res) => {
     return res.status(error.statusCode || liveHttpStatus || 500).json({
       success: false,
       message: liveDetail || error.message || 'Liveness check failed',
+    });
+  }
+};
+
+/* ═══════════════════════════════════════════════════════════
+   AWS FACE LIVENESS (active, video-based) — public, pre-registration
+═══════════════════════════════════════════════════════════ */
+
+/**
+ * Creates an Amazon Rekognition Face Liveness session.
+ * The browser's Amplify FaceLivenessDetector streams the interactive video
+ * challenge directly to AWS using the returned session id.
+ *
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ * @returns {Promise<void>}
+ */
+const startLivenessSession = async (req, res) => {
+  try {
+    const data = await createLivenessSessionSvc();
+    return res.status(200).json({
+      success: true,
+      sessionId: data.session_id,
+      region: data.region,
+    });
+  } catch (error) {
+    console.error('startLivenessSession error:', error);
+    const detail = error.response?.data?.detail || '';
+    const httpStatus = error.response?.status;
+    if (httpStatus === 503) {
+      return res.status(503).json({
+        success: false,
+        message: detail || 'Liveness service is not configured. Contact administrator.',
+        code: 'PROVIDER_NOT_CONFIGURED',
+      });
+    }
+    return res.status(httpStatus || 502).json({
+      success: false,
+      message: detail || error.message || 'Could not start liveness session',
+    });
+  }
+};
+
+/**
+ * Fetches the result of a completed Face Liveness session.
+ * The verdict, confidence, and live reference image all come from AWS (via the
+ * Python service), so the client cannot fabricate a "live" outcome. The live
+ * reference frame is returned so the frontend can reuse it as the selfie for
+ * face-matching against the CNIC.
+ *
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ * @returns {Promise<void>}
+ */
+const getLivenessResult = async (req, res) => {
+  try {
+    const sessionId = req.body?.sessionId || req.body?.session_id;
+    if (!sessionId) {
+      return res.status(400).json({
+        success: false,
+        message: 'sessionId is required',
+      });
+    }
+
+    const result = await getLivenessSessionResults({ session_id: sessionId });
+
+    return res.status(200).json({
+      success: true,
+      isLive: Boolean(result.is_live),
+      status: result.status,
+      confidence: result.confidence || 0,
+      // Live frame captured by AWS (base64 JPEG) — used as the selfie downstream.
+      referenceImageBase64: result.reference_image_base64 || null,
+      message: result.is_live
+        ? 'Liveness check passed'
+        : 'Liveness check failed. Please retry in good lighting and follow the on-screen prompts.',
+    });
+  } catch (error) {
+    console.error('getLivenessResult error:', error);
+    const detail = error.response?.data?.detail || '';
+    const httpStatus = error.response?.status;
+    if (httpStatus === 503) {
+      return res.status(503).json({
+        success: false,
+        message: detail || 'Liveness service is not configured. Contact administrator.',
+        code: 'PROVIDER_NOT_CONFIGURED',
+      });
+    }
+    return res.status(httpStatus || 502).json({
+      success: false,
+      message: detail || error.message || 'Could not fetch liveness result',
     });
   }
 };
@@ -896,6 +989,8 @@ export {
   previewCnicOcr,
   previewFaceMatch,
   previewLiveness,
+  startLivenessSession,
+  getLivenessResult,
   extractCnicData,
   matchFace,
   checkLiveness,

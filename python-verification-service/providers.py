@@ -9,6 +9,10 @@ from config import settings
 
 logger = logging.getLogger("kyc_providers")
 
+# Minimum AWS Face Liveness confidence (0-100) to treat a session as a real,
+# live person. AWS recommends 80-90 depending on how strict you want to be.
+LIVENESS_CONFIDENCE_THRESHOLD = 80.0
+
 
 class OCRProvider(abc.ABC):
     """
@@ -303,4 +307,45 @@ class AwsRekognitionProvider(FaceMatchingProvider):
         return {
             "is_live": quality_ok,
             "confidence": round(composite_confidence, 2)
+        }
+
+    # ── Amazon Rekognition Face Liveness (active, video-based) ──
+    # The interactive video challenge runs in the browser (Amplify SDK).
+    # The backend only (1) creates a session and (2) fetches its results.
+
+    def create_liveness_session(self) -> str:
+        """
+        Creates an Amazon Rekognition Face Liveness session.
+
+        Returns:
+            str: The SessionId the browser SDK streams the challenge to.
+        """
+        response = self.client.create_face_liveness_session()
+        return response["SessionId"]
+
+    def get_liveness_session_results(self, session_id: str) -> Dict[str, Any]:
+        """
+        Fetches the outcome of a completed Face Liveness session.
+
+        Args:
+            session_id (str): The session id returned by create_liveness_session.
+
+        Returns:
+            Dict[str, Any]: status, confidence, is_live, and the live reference
+            image bytes (returned inline by AWS when no S3 output is configured).
+        """
+        response = self.client.get_face_liveness_session_results(SessionId=session_id)
+
+        status = response.get("Status", "FAILED")            # SUCCEEDED | FAILED | EXPIRED | ...
+        confidence = response.get("Confidence", 0) or 0
+        reference_image = response.get("ReferenceImage", {}) or {}
+        image_bytes = reference_image.get("Bytes")           # may be None on failure
+
+        is_live = status == "SUCCEEDED" and confidence >= LIVENESS_CONFIDENCE_THRESHOLD
+
+        return {
+            "status": status,
+            "is_live": is_live,
+            "confidence": round(float(confidence), 2),
+            "reference_image_bytes": image_bytes,
         }

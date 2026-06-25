@@ -118,6 +118,36 @@ const verifyLiveness = async ({ selfie_url }) => {
 };
 
 /**
+ * Creates an Amazon Rekognition Face Liveness session.
+ * The browser streams the interactive video challenge directly to AWS using
+ * the returned session id; the backend never sees the video.
+ * @returns {Promise<Object>} { success, session_id, region }
+ */
+const createLivenessSession = async () => {
+  const response = await callWithRetry(
+    () => axios.post(`${PYTHON_URL}/liveness/create-session`, {}, { timeout: TIMEOUT }),
+    'LivenessCreateSession'
+  );
+  return response.data;
+};
+
+/**
+ * Fetches the verified result of a completed Face Liveness session from AWS.
+ * The result (including the live reference image) is authoritative — it comes
+ * from AWS, so a client cannot fabricate a "live" outcome or selfie.
+ * @param {Object} params - Parameters object
+ * @param {string} params.session_id - The Rekognition Face Liveness session id
+ * @returns {Promise<Object>} { success, is_live, status, confidence, reference_image_base64 }
+ */
+const getLivenessSessionResults = async ({ session_id }) => {
+  const response = await callWithRetry(
+    () => axios.post(`${PYTHON_URL}/liveness/session-result`, { session_id }, { timeout: TIMEOUT }),
+    'LivenessSessionResult'
+  );
+  return response.data;
+};
+
+/**
  * Pings the Python service's /health endpoint to confirm connectivity.
  * Uses a short timeout and no retries — this is a fast liveness probe meant
  * to run once at startup, not a request that should block boot for ~50s.
@@ -141,4 +171,11 @@ const checkHealth = async () => {
   }
 };
 
-export { verifyCnic, verifyFaceMatch, verifyLiveness, checkHealth };
+export {
+  verifyCnic,
+  verifyFaceMatch,
+  verifyLiveness,
+  createLivenessSession,
+  getLivenessSessionResults,
+  checkHealth,
+};

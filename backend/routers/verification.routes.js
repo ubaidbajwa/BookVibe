@@ -9,6 +9,8 @@ import {
   previewCnicOcr,
   previewFaceMatch,
   previewLiveness,
+  startLivenessSession,
+  getLivenessResult,
   extractCnicData,
   matchFace,
   checkLiveness,
@@ -56,6 +58,18 @@ router.post('/face-match', publicVerifyLimit, previewFaceMatch);
  * @desc Liveness check preview (Rate-limited).
  */
 router.post('/liveness', publicVerifyLimit, previewLiveness);
+
+/**
+ * @route POST /api/verify/liveness/session
+ * @desc Create an AWS Face Liveness session (Rate-limited).
+ */
+router.post('/liveness/session', publicVerifyLimit, startLivenessSession);
+
+/**
+ * @route POST /api/verify/liveness/session-result
+ * @desc Fetch the result of a completed Face Liveness session (Rate-limited).
+ */
+router.post('/liveness/session-result', publicVerifyLimit, getLivenessResult);
 
 // ─── AUTHENTICATED VERIFICATION ROUTES ───────────────────────────────────────
 
