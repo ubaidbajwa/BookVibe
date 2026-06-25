@@ -3,16 +3,19 @@
  * Allows a rejected user to re-upload CNIC + selfie and resubmit for admin review.
  */
 
-import { useState, useRef, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, lazy, Suspense } from 'react'
 import { useSelector, useDispatch } from 'react-redux'
 import { useNavigate } from 'react-router-dom'
 import axios from 'axios'
 import { refreshSession, setUser } from '../redux/slices/authSlice'
 import {
-    Upload, Camera, X, CheckCircle, Loader2, AlertTriangle,
+    Upload, CheckCircle, Loader2, AlertTriangle,
     Shield, RefreshCw, Clock, Info
 } from 'lucide-react'
 import { getAuthConfig } from '../utils/authConfig'
+
+// Lazy-loaded so the heavy AWS Amplify bundle only loads at the selfie step.
+const LivenessCheck = lazy(() => import('../components/LivenessCheck'))
 
 const BASE = import.meta.env.VITE_API_URL || 'http://localhost:3000/api/v1'
 
@@ -88,11 +91,9 @@ const ResubmitVerification = () => {
     const [cnicBackPrev, setCnicBackPrev] = useState(null)
     const [selfiePrev, setSelfiePrev] = useState(null)
 
-    const [webcamActive, setWebcamActive] = useState(false)
     const [submitting, setSubmitting] = useState(false)
-
-    const videoRef = useRef(null)
-    const streamRef = useRef(null)
+    // Confidence (0-100) from the AWS Face Liveness session; non-null = passed.
+    const [livenessConfidence, setLivenessConfidence] = useState(null)
 
     // Redirect non-rejected users to the right page
     useEffect(() => {
@@ -110,41 +111,16 @@ const ResubmitVerification = () => {
     useEffect(() => { setCnicBackPrev(cnicBack ? URL.createObjectURL(cnicBack) : null) }, [cnicBack])
     useEffect(() => { setSelfiePrev(selfieImg ? URL.createObjectURL(selfieImg) : null) }, [selfieImg])
 
-    // Cleanup webcam on unmount
-    useEffect(() => () => streamRef.current?.getTracks().forEach((t) => t.stop()), [])
-
-    const startWebcam = async () => {
-        try {
-            const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 1280 } } })
-            streamRef.current = s
-            setWebcamActive(true)
-        } catch { /* camera access denied */ }
-    }
-
-    const videoCallbackRef = useCallback((el) => {
-        videoRef.current = el
-        if (el && streamRef.current) { el.srcObject = streamRef.current; el.play().catch(() => {}) }
+    // AWS Face Liveness passed — the live frame AWS captured becomes the selfie.
+    const handleLivenessSuccess = useCallback(({ selfieFile, confidence }) => {
+        setSelfieImg(selfieFile)
+        setLivenessConfidence(typeof confidence === 'number' ? confidence : 0)
     }, [])
 
-    const stopWebcam = () => {
-        streamRef.current?.getTracks().forEach((t) => t.stop())
-        streamRef.current = null
-        if (videoRef.current) videoRef.current.srcObject = null
-        setWebcamActive(false)
-    }
-
-    const capturePhoto = () => {
-        const v = videoRef.current
-        if (!v || v.readyState < 2) { return }
-        const c = document.createElement('canvas')
-        c.width = v.videoWidth || 640; c.height = v.videoHeight || 480
-        c.getContext('2d').drawImage(v, 0, 0, c.width, c.height)
-        c.toBlob((b) => {
-            if (!b) { return }
-            setSelfieImg(new File([b], 'selfie.jpg', { type: 'image/jpeg' }))
-            stopWebcam()
-        }, 'image/jpeg', 0.92)
-    }
+    const handleLivenessReset = useCallback(() => {
+        setSelfieImg(null)
+        setLivenessConfidence(null)
+    }, [])
 
     const handleSubmit = async () => {
         if (!cnicFront || !cnicBack || !selfieImg) {
@@ -280,33 +256,27 @@ const ResubmitVerification = () => {
                         {selfiePrev ? (
                             <div className="relative rounded-xl overflow-hidden border border-emerald-500/30">
                                 <img src={selfiePrev} alt="" className="w-full h-40 object-cover" />
-                                <button onClick={() => setSelfieImg(null)}
+                                <div className="absolute top-2 left-2 flex items-center gap-1.5 px-2.5 py-1 bg-emerald-500/90 text-white text-xs rounded-lg">
+                                    <CheckCircle size={12} />
+                                    Live verified{livenessConfidence != null ? ` (${Math.round(livenessConfidence)}%)` : ''}
+                                </div>
+                                <button onClick={handleLivenessReset}
                                     className="absolute top-2 right-2 px-3 py-1 bg-[var(--bv-card)]/90 text-[var(--bv-text)] text-xs rounded-lg border border-[var(--bv-border)]">
                                     Retake
                                 </button>
                             </div>
-                        ) : webcamActive ? (
-                            <div className="relative rounded-xl overflow-hidden border border-[var(--bv-gold)]">
-                                <video ref={videoCallbackRef} autoPlay playsInline muted
-                                    onLoadedMetadata={(e) => e.target.play().catch(() => {})}
-                                    className="w-full h-40 object-cover bg-black" />
-                                <div className="absolute bottom-3 left-0 right-0 flex justify-center gap-3">
-                                    <button onClick={capturePhoto}
-                                        className="w-12 h-12 rounded-full bg-[var(--bv-card)] flex items-center justify-center shadow-lg border-4 border-[var(--bv-gold)]">
-                                        <Camera size={18} className="text-[var(--bv-gold)]" />
-                                    </button>
-                                    <button onClick={stopWebcam}
-                                        className="w-9 h-9 rounded-full bg-[var(--bv-danger)] flex items-center justify-center self-center">
-                                        <X size={13} className="text-white" />
-                                    </button>
-                                </div>
-                            </div>
                         ) : (
-                            <button onClick={startWebcam}
-                                className="w-full h-32 rounded-xl border border-dashed border-[var(--bv-gold-border)] hover:border-[var(--bv-gold)] hover:bg-[var(--bv-gold-glow)] bg-[var(--bv-bg-raised)] flex flex-col items-center justify-center gap-1.5 transition group">
-                                <Camera size={20} className="text-[var(--bv-gold)] group-hover:scale-110 transition-transform" />
-                                <p className="text-xs text-[var(--bv-text-muted)] font-semibold">Start Live Camera</p>
-                            </button>
+                            <Suspense fallback={
+                                <div className="flex items-center justify-center rounded-xl border border-[var(--bv-border)] bg-[var(--bv-surface)] p-8 text-sm text-[var(--bv-text-muted)]">
+                                    Loading live identity check…
+                                </div>
+                            }>
+                                <LivenessCheck
+                                    onSuccess={handleLivenessSuccess}
+                                    onFail={handleLivenessReset}
+                                    onError={handleLivenessReset}
+                                />
+                            </Suspense>
                         )}
                     </div>
                 </div>
