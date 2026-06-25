@@ -45,6 +45,14 @@ dotenv.config();
 const app = express();
 
 /**
+ * Trust the first proxy hop (Nginx reverse proxy in the Docker/EC2 setup).
+ * Without this, express-rate-limit and req.ip see only the proxy's IP, so
+ * every client shares one rate-limit bucket and X-Forwarded-* is ignored.
+ * `1` = trust exactly one hop (our Nginx), which is safe against spoofing.
+ */
+app.set('trust proxy', 1);
+
+/**
  * HTTP server instance
  */
 const server = http.createServer(app);

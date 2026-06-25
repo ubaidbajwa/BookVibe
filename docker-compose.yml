@@ -1,0 +1,67 @@
+# ============================================================
+#  BookVibe — production Docker Compose (single EC2 host)
+#
+#  Topology:
+#    Internet ──:80──> frontend (Nginx)
+#                        ├── /            → React SPA (static)
+#                        ├── /api/        → backend:3000  (REST + Stripe webhook)
+#                        └── /socket.io/  → backend:3000  (WebSockets)
+#                      backend ──> verification:5001  (KYC, internal only)
+#    MongoDB Atlas, Cloudinary, Stripe, etc. are external (via env files).
+#
+#  Usage:
+#    docker compose build          # build all images
+#    docker compose up -d          # start in background
+#    docker compose logs -f        # tail logs
+#    docker compose down           # stop & remove containers
+# ============================================================
+
+services:
+  # ---- Python KYC microservice (internal only) ----
+  verification:
+    build: ./python-verification-service
+    image: bookvibe-verification
+    env_file:
+      - ./python-verification-service/.env
+    restart: unless-stopped
+    expose:
+      - "5001"                       # reachable only inside the compose network
+    volumes:
+      - deepface_weights:/root/.deepface   # cache ML model weights across restarts
+
+  # ---- Node backend (internal only; reached via Nginx) ----
+  backend:
+    build: ./backend
+    image: bookvibe-backend
+    env_file:
+      - ./backend/.env
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      # Override whatever is in .env so the backend reaches the python
+      # service by its compose service name, not localhost.
+      PYTHON_VERIFY_URL: http://verification:5001
+    depends_on:
+      - verification
+    restart: unless-stopped
+    expose:
+      - "3000"
+
+  # ---- Nginx: serves the React build AND reverse-proxies the backend ----
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: /api/v1
+        VITE_SOCKET_URL: ""
+        VITE_ADMIN_PATH: ${VITE_ADMIN_PATH}   # from the root .env file
+    image: bookvibe-frontend
+    depends_on:
+      - backend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      # - "443:443"   # enable once TLS is configured (see DOCKER.md)
+
+volumes:
+  deepface_weights:
