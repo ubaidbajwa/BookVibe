@@ -481,7 +481,11 @@ export const getAllProperties = async (req, res) => {
       }
     }
 
-    if (city) filter.city = new RegExp(city, 'i');
+    if (city) {
+      // Escape regex special characters to prevent ReDoS attacks
+      const escapedCity = city.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      filter.city = new RegExp(escapedCity, 'i');
+    }
     if (stayType && stayType !== 'all') filter.stayTypes = stayType;
     if (minPrice || maxPrice) {
       filter.price = {};

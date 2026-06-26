@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     # Only the Node backend should ever call this service; wildcard is intentionally removed.
     ALLOWED_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
 
+    # Shared secret for backend-to-service authentication
+    VERIFICATION_SERVICE_SECRET: Optional[str] = None
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 

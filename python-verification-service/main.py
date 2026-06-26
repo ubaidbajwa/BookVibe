@@ -1,6 +1,6 @@
 import logging
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Any, Dict
@@ -52,6 +52,24 @@ def get_face_provider() -> FaceMatchingProvider:
     if settings.USE_MOCK_PROVIDERS:
         return MockKycProvider()
     return AwsRekognitionProvider()
+
+
+# --- Authentication Middleware ---
+
+async def verify_api_secret(request: Request):
+    """
+    Verifies the shared secret provided in the X-API-Key header.
+    """
+    secret = settings.VERIFICATION_SERVICE_SECRET
+    if not secret:
+        # If no secret is configured, we assume the service is in a secure
+        # internal network or local dev, and allow the request.
+        return
+
+    provided_secret = request.headers.get("X-API-Key")
+    if provided_secret != secret:
+        logger.warning(f"Unauthorized access attempt from {request.client.host}")
+        raise HTTPException(status_code=401, detail="Unauthorized: Invalid API Key")
 
 
 # --- Request models ---
@@ -187,7 +205,7 @@ async def health():
     }
 
 
-@app.post("/verify-cnic")
+@app.post("/verify-cnic", dependencies=[Depends(verify_api_secret)])
 async def verify_cnic(req: VerificationRequest):
     """
     Performs OCR and verification on a CNIC image.
@@ -230,7 +248,7 @@ async def verify_cnic(req: VerificationRequest):
     }
 
 
-@app.post("/face-match")
+@app.post("/face-match", dependencies=[Depends(verify_api_secret)])
 async def face_match(req: FaceMatchRequest):
     """
     Compares a selfie against a CNIC photo.
@@ -263,7 +281,7 @@ async def face_match(req: FaceMatchRequest):
     }
 
 
-@app.post("/liveness-check")
+@app.post("/liveness-check", dependencies=[Depends(verify_api_secret)])
 async def liveness_check(req: LivenessRequest):
     """
     Performs a liveness check on a selfie.

@@ -6,6 +6,7 @@
 import axios from 'axios';
 
 const PYTHON_URL = process.env.PYTHON_VERIFICATION_URL || process.env.PYTHON_VERIFY_URL || 'http://localhost:5001';
+const VERIFICATION_SECRET = process.env.VERIFICATION_SERVICE_SECRET;
 const TIMEOUT = 15000; // 15 s per attempt — hard cap prevents event-loop stall
 const MAX_RETRIES = 2; // Total 3 attempts (1 + 2 retries) — worst case: 3×15s + 2×4s = 53s
 const RETRY_DELAY = 4000; // 4 s — gives Cloudinary CDN propagation time
@@ -42,6 +43,18 @@ const isRetriableError = (error) => {
   }
 
   return false;
+};
+
+/**
+ * Builds the headers for verification service requests.
+ * @returns {Object} Headers
+ */
+const getHeaders = () => {
+  const headers = { 'Content-Type': 'application/json' };
+  if (VERIFICATION_SECRET) {
+    headers['X-API-Key'] = VERIFICATION_SECRET;
+  }
+  return headers;
 };
 
 /**
@@ -82,7 +95,10 @@ const callWithRetry = async (fn, label = 'Verification') => {
  */
 const verifyCnic = async ({ image_url }) => {
   const response = await callWithRetry(
-    () => axios.post(`${PYTHON_URL}/verify-cnic`, { image_url }, { timeout: TIMEOUT }),
+    () => axios.post(`${PYTHON_URL}/verify-cnic`, { image_url }, {
+      timeout: TIMEOUT,
+      headers: getHeaders()
+    }),
     'OCR'
   );
   return response.data;
@@ -97,7 +113,10 @@ const verifyCnic = async ({ image_url }) => {
  */
 const verifyFaceMatch = async ({ selfie_url, cnic_url }) => {
   const response = await callWithRetry(
-    () => axios.post(`${PYTHON_URL}/face-match`, { selfie_url, cnic_url }, { timeout: TIMEOUT }),
+    () => axios.post(`${PYTHON_URL}/face-match`, { selfie_url, cnic_url }, {
+      timeout: TIMEOUT,
+      headers: getHeaders()
+    }),
     'FaceMatch'
   );
   return response.data;
@@ -111,7 +130,10 @@ const verifyFaceMatch = async ({ selfie_url, cnic_url }) => {
  */
 const verifyLiveness = async ({ selfie_url }) => {
   const response = await callWithRetry(
-    () => axios.post(`${PYTHON_URL}/liveness-check`, { selfie_url }, { timeout: TIMEOUT }),
+    () => axios.post(`${PYTHON_URL}/liveness-check`, { selfie_url }, {
+      timeout: TIMEOUT,
+      headers: getHeaders()
+    }),
     'Liveness'
   );
   return response.data;

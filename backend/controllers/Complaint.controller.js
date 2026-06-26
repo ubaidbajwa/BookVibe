@@ -53,8 +53,16 @@ const fileComplaint = async (req, res) => {
       if (!booking) return res.status(404).json({ success: false, message: 'Booking not found' });
 
       const complainantId = req.user._id.toString();
-      const guestId = booking.userId?._id?.toString();
+      const guestId = booking.userId?._id?.toString() || booking.userId?.toString();
       const hostId = booking.propertyId?.hostBy?.toString();
+
+      // Security Guard: Complainant must be either the guest or the host of the booking.
+      if (complainantId !== guestId && complainantId !== hostId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Unauthorized: You are not a party to this booking.'
+        });
+      }
 
       resolvedPropertyId = resolvedPropertyId || booking.propertyId?._id?.toString() || null;
 
