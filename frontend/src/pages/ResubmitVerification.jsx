@@ -94,6 +94,8 @@ const ResubmitVerification = () => {
     const [submitting, setSubmitting] = useState(false)
     // Confidence (0-100) from the AWS Face Liveness session; non-null = passed.
     const [livenessConfidence, setLivenessConfidence] = useState(null)
+    // AWS Face Liveness session id — re-verified server-side (anti-spoofing).
+    const [livenessSessionId, setLivenessSessionId] = useState(null)
 
     // Redirect non-rejected users to the right page
     useEffect(() => {
@@ -111,15 +113,18 @@ const ResubmitVerification = () => {
     useEffect(() => { setCnicBackPrev(cnicBack ? URL.createObjectURL(cnicBack) : null) }, [cnicBack])
     useEffect(() => { setSelfiePrev(selfieImg ? URL.createObjectURL(selfieImg) : null) }, [selfieImg])
 
-    // AWS Face Liveness passed — the live frame AWS captured becomes the selfie.
-    const handleLivenessSuccess = useCallback(({ selfieFile, confidence }) => {
+    // AWS Face Liveness passed — the live frame AWS captured becomes the selfie,
+    // and the sessionId is sent so the backend can re-verify the live result.
+    const handleLivenessSuccess = useCallback(({ selfieFile, confidence, sessionId }) => {
         setSelfieImg(selfieFile)
         setLivenessConfidence(typeof confidence === 'number' ? confidence : 0)
+        setLivenessSessionId(sessionId || null)
     }, [])
 
     const handleLivenessReset = useCallback(() => {
         setSelfieImg(null)
         setLivenessConfidence(null)
+        setLivenessSessionId(null)
     }, [])
 
     const handleSubmit = async () => {
@@ -132,6 +137,9 @@ const ResubmitVerification = () => {
             fd.append('frontImage', cnicFront)
             fd.append('backImage', cnicBack)
             fd.append('selfieImage', selfieImg)
+            if (livenessSessionId) {
+                fd.append('livenessSessionId', livenessSessionId)
+            }
 
             // Never force Content-Type on a FormData body — see AdminProfile.jsx for why.
             const res = await axios.post(`${BASE}/verify/resubmit`, fd, {

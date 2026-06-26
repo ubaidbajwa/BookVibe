@@ -868,12 +868,40 @@ const resubmitVerification = async (req, res) => {
       });
     }
 
-    // Upload new images
-    [uploadedFront, uploadedBack, uploadedSelfie] = await Promise.all([
+    /* ─── LIVENESS (server-validated — anti-spoofing) ───
+       The selfie must come from a genuine AWS Face Liveness session, not a
+       client-uploaded file, so a rejected user cannot script a resubmit with a
+       static photo. We re-verify the session server-side and use AWS's own
+       reference frame as the selfie when the session is a real live capture. */
+    const livenessSessionId = req.body?.livenessSessionId || null;
+    let livenessVerified = false;
+    let livenessConfidence = 0;
+    let awsSelfieBase64 = null;
+    if (livenessSessionId) {
+      try {
+        const live = await getLivenessSessionResults({ session_id: livenessSessionId });
+        livenessVerified = live?.is_live === true;
+        livenessConfidence = Number(live?.confidence || 0);
+        if (livenessVerified && live?.reference_image_base64) {
+          awsSelfieBase64 = live.reference_image_base64;
+        }
+      } catch { /* service down — guests can't auto-verify; hosts go to admin review */ }
+    }
+
+    // Upload CNIC images from the client files; selfie from the AWS live frame
+    // when available, else the client file (host fallback — admin reviews it).
+    [uploadedFront, uploadedBack] = await Promise.all([
       uploadTempVerificationFile(frontImage, 'cnic_front'),
       uploadTempVerificationFile(backImage, 'cnic_back'),
-      uploadTempVerificationFile(selfieImage, 'selfie'),
     ]);
+    uploadedSelfie = awsSelfieBase64
+      ? await cloudinary.uploader.upload(`data:image/jpeg;base64,${awsSelfieBase64}`, {
+          folder: 'BookVibe/TempVerification',
+          public_id: `verify_${Date.now()}_selfie`,
+          resource_type: 'image',
+          timeout: 120000,
+        })
+      : await uploadTempVerificationFile(selfieImage, 'selfie');
 
     // Delete old Cloudinary images (best-effort)
     const oldIds = [
@@ -883,11 +911,10 @@ const resubmitVerification = async (req, res) => {
     ].filter(Boolean);
     oldIds.forEach((pid) => destroyCloudinaryImage(pid).catch(() => {}));
 
-    // Run OCR + face match + liveness in parallel
-    const [ocrSettled, faceSettled, livenessSettled] = await Promise.allSettled([
+    // Run OCR + face match in parallel (liveness already validated above)
+    const [ocrSettled, faceSettled] = await Promise.allSettled([
       verifyCnic({ image_url: uploadedFront.secure_url }),
       verifyFaceMatch({ selfie_url: uploadedSelfie.secure_url, cnic_url: uploadedFront.secure_url }),
-      verifyLiveness({ selfie_url: uploadedSelfie.secure_url }),
     ]);
 
     // Update images on user document
@@ -918,9 +945,7 @@ const resubmitVerification = async (req, res) => {
     if (faceSettled.status === 'fulfilled') {
       user.cnicData = { ...user.cnicData, faceMatchScore: faceSettled.value?.confidence ?? 0 };
     }
-    if (livenessSettled.status === 'fulfilled') {
-      user.cnicData = { ...user.cnicData, livenessScore: livenessSettled.value?.confidence ?? 0 };
-    }
+    user.cnicData = { ...user.cnicData, livenessScore: livenessConfidence || 0 };
 
     user.markModified('cnicData');
     user.rejectedReason = undefined;
@@ -936,7 +961,8 @@ const resubmitVerification = async (req, res) => {
       // Guests: re-evaluate AI results — same logic as first registration
       const ocrOk = ocrSettled.status === 'fulfilled' && ocrSettled.value?.success;
       const faceOk = faceSettled.status === 'fulfilled' && faceSettled.value?.decision === 'approved';
-      const livenessOk = livenessSettled.status === 'fulfilled' && livenessSettled.value?.is_live === true;
+      // Authoritative server-verified AWS liveness session (not a spoofable image check).
+      const livenessOk = livenessVerified;
 
       if (ocrOk && faceOk && livenessOk) {
         user.isVerified = 'verified';

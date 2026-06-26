@@ -540,6 +540,9 @@ const Signup = () => {
     const [selfiePrev, setSelfiePrev] = useState(null)
     // Confidence (0-100) from the AWS Face Liveness session; non-null = liveness passed.
     const [livenessConfidence, setLivenessConfidence] = useState(null)
+    // AWS Face Liveness session id — sent to the backend so it can re-verify the
+    // live result server-side and source the selfie from AWS (anti-spoofing).
+    const [livenessSessionId, setLivenessSessionId] = useState(null)
 
     // --- OTP State ---
     const [emailOtp, setEmailOtp] = useState(Array(OTP_LEN).fill(''))
@@ -677,11 +680,14 @@ const Signup = () => {
      * handleLivenessSuccess - Called when the AWS Face Liveness check passes.
      * The live reference frame captured by AWS becomes the selfie used for
      * face-matching, so the verified-live face is the one matched to the CNIC.
-     * @param {{ selfieFile: File, confidence: number }} result
+     * The sessionId is forwarded to the backend so it can re-verify the live
+     * outcome server-side (the client result alone is never trusted).
+     * @param {{ selfieFile: File, confidence: number, sessionId: string }} result
      */
-    const handleLivenessSuccess = useCallback(({ selfieFile, confidence }) => {
+    const handleLivenessSuccess = useCallback(({ selfieFile, confidence, sessionId }) => {
         setSelfieImg(selfieFile)
         setLivenessConfidence(typeof confidence === 'number' ? confidence : 0)
+        setLivenessSessionId(sessionId || null)
         setVerifyError('')
     }, [])
 
@@ -692,6 +698,7 @@ const Signup = () => {
     const handleLivenessFail = useCallback((message) => {
         setSelfieImg(null)
         setLivenessConfidence(null)
+        setLivenessSessionId(null)
         setVerifyError(message || 'Liveness check failed. Please try again.')
     }, [])
 
@@ -970,7 +977,12 @@ const Signup = () => {
             if (selfieImg) {
                 fd.append('selfieImage', selfieImg)
             }
-            
+            // Forward the AWS liveness session so the backend can re-verify the
+            // live result server-side and use the AWS-captured frame as the selfie.
+            if (livenessSessionId) {
+                fd.append('livenessSessionId', livenessSessionId)
+            }
+
             if (ocrResult) {
                 const cnicData = {
                     cnicNumber: ocrResult.cnicNumber,

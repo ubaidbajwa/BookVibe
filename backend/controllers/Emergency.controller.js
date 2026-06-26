@@ -3,39 +3,6 @@
 import BookingModel from "../models/BookingModel.js";
 import notificationService from "../services/notification.service.js";
 
-// --- Helpers ---
-
-/**
- * Mocks nearby medical facilities based on coordinates.
- * 
- * @function getNearbyFacilities
- * @param {number} lat - Latitude.
- * @param {number} lng - Longitude.
- * @returns {Array<Object>} List of facilities.
- */
-const getNearbyFacilities = function(lat, lng) {
-  return [
-    {
-      name: 'City General Hospital',
-      type: 'Hospital',
-      distance: '1.2km',
-      phone: '+92-300-1234567'
-    },
-    {
-      name: 'Al-Shifa Clinic',
-      type: 'Clinic',
-      distance: '0.8km',
-      phone: '+92-300-7654321'
-    },
-    {
-      name: 'Local Pharmacy',
-      type: 'Pharmacy',
-      distance: '0.3km',
-      phone: '+92-300-1122334'
-    }
-  ];
-};
-
 // --- Emergency Controllers ---
 
 /**
@@ -114,15 +81,9 @@ export const triggerMedicalSOS = async (req, res) => {
       critical: true, // triggers Twilio SMS fallback
     });
 
-    let facilities = [];
-    if (lat && lng) {
-      facilities = getNearbyFacilities(lat, lng);
-    }
-
     return res.json({
       success: true,
       message: 'SOS Triggered. Host has been alerted via Dashboard and SMS.',
-      nearbyFacilities: facilities,
       emergencyContacts: {
         ambulance: '1122',
         police: '15'

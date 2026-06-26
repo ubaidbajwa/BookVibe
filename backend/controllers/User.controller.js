@@ -24,7 +24,7 @@ import {
   verifyAccessToken,
   verifyRefreshToken,
 } from "../utils/authTokens.js"
-import { verifyCnic, verifyFaceMatch, verifyLiveness } from "../utils/verificationService.js"
+import { verifyCnic, verifyFaceMatch, getLivenessSessionResults } from "../utils/verificationService.js"
 import { notifyAdmin } from "../utils/notificationHelper.js"
 import { sendContactEmail } from "../middlewares/Emails/ContactEmail.js"
 
@@ -36,6 +36,22 @@ const buildAuthResponse = ({ user, accessToken, message }) => ({
 
 const generateOTP = () => Math.floor(100000 + Math.random() * 900000).toString()
 const PHONE_REGEX = /^\+\d{7,15}$/
+
+/**
+ * Validates password strength.
+ * Requires at least 8 characters with at least one letter and one number.
+ * @param {string} password - The plaintext password to check.
+ * @returns {string|null} An error message if invalid, otherwise null.
+ */
+const validatePasswordStrength = (password) => {
+  if (typeof password !== "string" || password.length < 8) {
+    return "Password must be at least 8 characters"
+  }
+  if (!/[A-Za-z]/.test(password) || !/\d/.test(password)) {
+    return "Password must include at least one letter and one number"
+  }
+  return null
+}
 
 // Issue 5 fix: delete OS temp file after Cloudinary upload in registerUser
 const unlinkTempFile = (tempFilePath) => {
@@ -205,8 +221,9 @@ const registerUser = async (req, res) => {
     if (role !== "guest" && role !== "host") {
       return res.status(400).json({ message: "Invalid role", success: false })
     }
-    if (password.length < 6) {
-      return res.status(400).json({ message: "Password must be at least 6 characters", success: false })
+    const pwdError = validatePasswordStrength(password)
+    if (pwdError) {
+      return res.status(400).json({ message: pwdError, success: false })
     }
 
     const existingUser = await UserAndHost.findOne({ email })
@@ -233,14 +250,44 @@ const registerUser = async (req, res) => {
     // MED-4 fix: add explicit timeout on all registration uploads — previously these had
     // no timeout and could hang indefinitely on a degraded Cloudinary connection.
     const UPLOAD_OPTS = { timeout: 120000, chunk_size: 6000000 }
+    const livenessSessionId = req.body?.livenessSessionId || null
 
-    const [f, b, s] = await Promise.all([
-      cloudinary.uploader.upload(frontImage.tempFilePath,  { folder: "BookVibe/Users/CNIC",   ...UPLOAD_OPTS }),
-      cloudinary.uploader.upload(backImage.tempFilePath,   { folder: "BookVibe/Users/CNIC",   ...UPLOAD_OPTS }),
-      cloudinary.uploader.upload(selfieImage.tempFilePath, { folder: "BookVibe/Users/Selfie", ...UPLOAD_OPTS }),
+    // Upload the CNIC images first (always sourced from the client's files).
+    const [f, b] = await Promise.all([
+      cloudinary.uploader.upload(frontImage.tempFilePath, { folder: "BookVibe/Users/CNIC", ...UPLOAD_OPTS }),
+      cloudinary.uploader.upload(backImage.tempFilePath,  { folder: "BookVibe/Users/CNIC", ...UPLOAD_OPTS }),
     ])
     unlinkTempFile(frontImage.tempFilePath)
     unlinkTempFile(backImage.tempFilePath)
+
+    /* ─── LIVENESS (server-validated — anti-spoofing) ───
+       The selfie used for KYC must come from a real AWS Face Liveness session,
+       not a client-uploaded file: otherwise a scripted client could skip the
+       video challenge and submit a static photo. We re-verify the session
+       server-side and, when it is a genuine live capture, use AWS's own
+       reference frame as the selfie. The client file is only a host fallback. */
+    let livenessVerified = false
+    let livenessConfidence = 0
+    let awsSelfieBase64 = null
+    if (livenessSessionId) {
+      try {
+        const live = await getLivenessSessionResults({ session_id: livenessSessionId })
+        livenessVerified = live?.is_live === true
+        livenessConfidence = Number(live?.confidence || 0)
+        if (livenessVerified && live?.reference_image_base64) {
+          awsSelfieBase64 = live.reference_image_base64
+        }
+      } catch {
+        // Liveness service unavailable — guests can't auto-verify (enforced in the
+        // decision below); hosts proceed to manual admin review regardless.
+      }
+    }
+
+    // Selfie source: the AWS live frame when available (authoritative), otherwise
+    // the client-uploaded file (host fallback — an admin reviews it manually).
+    const s = awsSelfieBase64
+      ? await cloudinary.uploader.upload(`data:image/jpeg;base64,${awsSelfieBase64}`, { folder: "BookVibe/Users/Selfie", ...UPLOAD_OPTS })
+      : await cloudinary.uploader.upload(selfieImage.tempFilePath, { folder: "BookVibe/Users/Selfie", ...UPLOAD_OPTS })
     unlinkTempFile(selfieImage.tempFilePath)
 
     let profileImage = null
@@ -257,7 +304,6 @@ const registerUser = async (req, res) => {
     let ocrResult = null
     let ocrBackResult = null
     let faceMatchResult = null
-    let livenessResult = null
 
     try { ocrResult = await verifyCnic({ image_url: f.secure_url }) }
     catch (e) {
@@ -295,9 +341,6 @@ const registerUser = async (req, res) => {
       // Hosts go to admin review regardless — service being down is non-critical
     }
 
-    try { livenessResult = await verifyLiveness({ selfie_url: s.secure_url }) }
-    catch { /* non-critical — liveness is advisory */ }
-
     /* ─── ENFORCE FACE MATCH DECISION ─── */
     // For hosts when face match service was down (null result), default to manual_review
     // so they still get created and go to admin queue instead of being hard-rejected
@@ -320,7 +363,9 @@ const registerUser = async (req, res) => {
     /* ─── LIVENESS + FACE FLAGS ─── */
     // faceDecision is "approved" or "manual_review" here (rejected was caught above)
     const faceApproved = faceDecision === 'approved'
-    const livenessOk   = livenessResult?.is_live === true
+    // Authoritative: server-verified AWS Face Liveness session (not a spoofable
+    // passive image check). A guest cannot auto-verify without a genuine live session.
+    const livenessOk   = livenessVerified
 
     /* ─── BUILD CNIC DATA (ALL FIELDS NOW INCLUDED) ─── */
     const ocrFront = ocrResult?.data || {}
@@ -400,7 +445,7 @@ const registerUser = async (req, res) => {
       gender:        ocrFront.gender         || ocrBack.gender         || null,
       confidence:    ocrFront.confidence     || ocrBack.confidence     || null,
       faceMatchScore: faceConfidence || null,
-      livenessScore:  Number(livenessResult?.confidence || 0) || null,
+      livenessScore:  livenessConfidence || null,
       verifiedAt: new Date(),
     }
 
@@ -496,7 +541,7 @@ const verifyOTP = async (req, res) => {
   try {
     const { email, otp } = req.body
     if (!email || !otp) return res.status(400).json({ message: "Email and OTP are required", success: false })
-    const user = await UserAndHost.findOne({ email })
+    const user = await UserAndHost.findOne({ email }).select("+otpHash +otpExpiresAt")
     if (!user) return res.status(404).json({ message: "Account not found", success: false })
     if (user.isEmailVerified) return res.status(400).json({ message: "Email already verified", success: false })
     if (!user.otpHash || !user.otpExpiresAt) return res.status(400).json({ message: "No OTP found.", success: false })
@@ -522,7 +567,7 @@ const resendOTP = async (req, res) => {
   try {
     const { email } = req.body
     if (!email) return res.status(400).json({ message: "Email is required", success: false })
-    const user = await UserAndHost.findOne({ email })
+    const user = await UserAndHost.findOne({ email }).select("+otpExpiresAt")
     if (!user) return res.status(404).json({ message: "Account not found", success: false })
     if (user.isEmailVerified) return res.status(400).json({ message: "Email already verified", success: false })
     if (user.otpExpiresAt) {
@@ -542,9 +587,9 @@ const login = async (req, res) => {
   try {
     const { email, password } = req.body
     if (!email || !password) return res.status(400).json({ message: "All fields are required", success: false })
-    const user = await UserAndHost.findOne({ email })
+    const user = await UserAndHost.findOne({ email }).select("+password")
     if (!user) return res.status(404).json({ message: "User not found", success: false })
-    
+
     if (user.isBlocked) return res.status(403).json({ message: "Account blocked.", success: false })
     
     const isMatch = await bcrypt.compare(password, user.password)
@@ -581,7 +626,7 @@ const refreshSession = async (req, res) => {
     const decoded = verifyRefreshToken(refreshToken)
     if (decoded.type !== "refresh") return res.status(401).json({ message: "Invalid refresh token", success: false })
 
-    const user = await UserAndHost.findById(decoded.id)
+    const user = await UserAndHost.findById(decoded.id).select("+refreshTokenHash +refreshTokenExpiresAt")
     if (!user) { clearAuthCookies(res); return res.status(401).json({ message: "User not found", success: false }) }
     
     // Reactivate if deactivated
@@ -646,7 +691,9 @@ const resetPasswordWithToken = async (req, res) => {
   try {
     const { token } = req.params
     const { password } = req.body
-    if (!token || !password || password.length < 6) return res.status(400).json({ message: "Token + min 6 char password", success: false })
+    if (!token || !password) return res.status(400).json({ message: "Token and new password are required", success: false })
+    const resetPwdError = validatePasswordStrength(password)
+    if (resetPwdError) return res.status(400).json({ message: resetPwdError, success: false })
     const hashedToken = crypto.createHash("sha256").update(token).digest("hex")
     const user = await UserAndHost.findOne({ passwordResetTokenHash: hashedToken, passwordResetExpiresAt: { $gt: new Date() } })
     if (!user) return res.status(400).json({ message: "Reset link invalid or expired", success: false })
@@ -717,9 +764,10 @@ const updatePassword = async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body
     if (!currentPassword || !newPassword) return res.status(400).json({ message: "Both fields required", success: false })
-    if (newPassword.length < 6) return res.status(400).json({ message: "Min 6 chars", success: false })
+    const newPwdError = validatePasswordStrength(newPassword)
+    if (newPwdError) return res.status(400).json({ message: newPwdError, success: false })
     if (currentPassword === newPassword) return res.status(400).json({ message: "Must be different", success: false })
-    const user = await UserAndHost.findById(req.user._id)
+    const user = await UserAndHost.findById(req.user._id).select("+password")
     const isMatch = await bcrypt.compare(currentPassword, user.password)
     if (!isMatch) return res.status(400).json({ message: "Current password wrong", success: false })
     const salt = await bcrypt.genSalt(12)

@@ -4,6 +4,7 @@
  */
 
 import express from 'express';
+import rateLimit from 'express-rate-limit';
 import {
   isAuthenticated,
   isAuthorized
@@ -45,11 +46,29 @@ router.use(isAuthenticated, isAuthorized('admin'));
 // ─── SECURITY: PIN GATE ──────────────────────────────────────────────────────
 
 /**
+ * Strict limiter on PIN attempts — a 6-digit PIN is the admin second factor, so
+ * a stolen admin session must not be able to brute-force it. 5 attempts per
+ * 15 minutes per IP makes enumeration of the 10^6 keyspace infeasible.
+ */
+const pinLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: (req) => req.method === 'OPTIONS',
+  message: {
+    success: false,
+    code: 'ADMIN_GATE_REQUIRED',
+    message: 'Too many PIN attempts. Please try again in 15 minutes.',
+  },
+});
+
+/**
  * @route POST /api/v1/user/admin/verify-pin
  * @desc Verify the admin security PIN and issue a gate token.
  *       Defined BEFORE the gate guard — this is how the gate token is obtained.
  */
-router.post('/verify-pin', verifyAdminPin);
+router.post('/verify-pin', pinLimiter, verifyAdminPin);
 
 // Every admin data/action route below requires a valid gate token (second factor).
 router.use(requireAdminGate);

@@ -10,6 +10,12 @@ const TIMEOUT = 15000; // 15 s per attempt — hard cap prevents event-loop stal
 const MAX_RETRIES = 2; // Total 3 attempts (1 + 2 retries) — worst case: 3×15s + 2×4s = 53s
 const RETRY_DELAY = 4000; // 4 s — gives Cloudinary CDN propagation time
 
+// Shared secret sent on every call so the Python service can reject any request
+// that did not originate from this backend. Must match INTERNAL_API_KEY in the
+// python-verification-service .env. No-op (header omitted) if unset.
+const INTERNAL_KEY = process.env.PYTHON_INTERNAL_KEY || '';
+const internalHeaders = INTERNAL_KEY ? { 'X-Internal-Key': INTERNAL_KEY } : {};
+
 /* -------------------------------------------------------------------------- */
 /*                                Retry Logic                                 */
 /* -------------------------------------------------------------------------- */
@@ -82,7 +88,7 @@ const callWithRetry = async (fn, label = 'Verification') => {
  */
 const verifyCnic = async ({ image_url }) => {
   const response = await callWithRetry(
-    () => axios.post(`${PYTHON_URL}/verify-cnic`, { image_url }, { timeout: TIMEOUT }),
+    () => axios.post(`${PYTHON_URL}/verify-cnic`, { image_url }, { timeout: TIMEOUT, headers: internalHeaders }),
     'OCR'
   );
   return response.data;
@@ -97,7 +103,7 @@ const verifyCnic = async ({ image_url }) => {
  */
 const verifyFaceMatch = async ({ selfie_url, cnic_url }) => {
   const response = await callWithRetry(
-    () => axios.post(`${PYTHON_URL}/face-match`, { selfie_url, cnic_url }, { timeout: TIMEOUT }),
+    () => axios.post(`${PYTHON_URL}/face-match`, { selfie_url, cnic_url }, { timeout: TIMEOUT, headers: internalHeaders }),
     'FaceMatch'
   );
   return response.data;
@@ -111,7 +117,7 @@ const verifyFaceMatch = async ({ selfie_url, cnic_url }) => {
  */
 const verifyLiveness = async ({ selfie_url }) => {
   const response = await callWithRetry(
-    () => axios.post(`${PYTHON_URL}/liveness-check`, { selfie_url }, { timeout: TIMEOUT }),
+    () => axios.post(`${PYTHON_URL}/liveness-check`, { selfie_url }, { timeout: TIMEOUT, headers: internalHeaders }),
     'Liveness'
   );
   return response.data;
@@ -125,7 +131,7 @@ const verifyLiveness = async ({ selfie_url }) => {
  */
 const createLivenessSession = async () => {
   const response = await callWithRetry(
-    () => axios.post(`${PYTHON_URL}/liveness/create-session`, {}, { timeout: TIMEOUT }),
+    () => axios.post(`${PYTHON_URL}/liveness/create-session`, {}, { timeout: TIMEOUT, headers: internalHeaders }),
     'LivenessCreateSession'
   );
   return response.data;
@@ -141,7 +147,7 @@ const createLivenessSession = async () => {
  */
 const getLivenessSessionResults = async ({ session_id }) => {
   const response = await callWithRetry(
-    () => axios.post(`${PYTHON_URL}/liveness/session-result`, { session_id }, { timeout: TIMEOUT }),
+    () => axios.post(`${PYTHON_URL}/liveness/session-result`, { session_id }, { timeout: TIMEOUT, headers: internalHeaders }),
     'LivenessSessionResult'
   );
   return response.data;

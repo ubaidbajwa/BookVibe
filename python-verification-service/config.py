@@ -34,6 +34,12 @@ class Settings(BaseSettings):
     # Only the Node backend should ever call this service; wildcard is intentionally removed.
     ALLOWED_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
 
+    # Shared secret between the Node backend and this service. When set, every
+    # verification endpoint requires a matching `X-Internal-Key` header, so the
+    # service cannot be driven directly even if its port is reachable. Leave
+    # empty only in local dev. (CORS does NOT protect server-to-server calls.)
+    INTERNAL_API_KEY: Optional[str] = None
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 

@@ -3,13 +3,13 @@
  * @description Guest-facing emergency SOS trigger component, displayed inside an active booking
  * detail panel. Tapping the button enters a two-step confirmation flow to avoid
  * accidental triggers. On confirmation the SOS is POSTed to the backend which
- * instantly alerts the host via Socket.io. The response may include a list of
- * nearby medical facilities that are then rendered with emergency hotline numbers.
+ * instantly alerts the host via Socket.io. On success the national emergency
+ * hotline numbers are rendered for immediate dialing.
  */
 
 import { useState } from 'react';
 import axios from 'axios';
-import { ShieldAlert, Loader2, Phone, AlertCircle, Info } from 'lucide-react';
+import { ShieldAlert, Loader2, CheckCircle2 } from 'lucide-react';
 
 const BASE = import.meta.env.VITE_API_URL || 'http://localhost:3000/api/v1';
 
@@ -41,9 +41,9 @@ const EmergencySOSButton = ({ bookingId }) => {
   const [message, setMessage] = useState('');
 
   /**
-   * @description Nearby medical facilities returned by the backend after SOS.
+   * @description True once the SOS has been successfully triggered.
    */
-  const [facilities, setFacilities] = useState([]);
+  const [triggered, setTriggered] = useState(false);
 
   /* -------------------------------------------------------------------------- */
   /*                                   HANDLERS                                 */
@@ -51,7 +51,7 @@ const EmergencySOSButton = ({ bookingId }) => {
 
   /**
    * @description Fire the SOS API call.
-   * On success, a persistent toast is shown and nearby facilities are stored in state.
+   * On success the confirmation panel is replaced with the emergency hotlines.
    */
   const triggerSOS = async () => {
     setLoading(true);
@@ -68,7 +68,7 @@ const EmergencySOSButton = ({ bookingId }) => {
       );
 
       if (res.data.success) {
-        setFacilities(res.data.nearbyFacilities || []);
+        setTriggered(true);
         setShowConfirm(false);
       }
     } catch {
@@ -84,8 +84,8 @@ const EmergencySOSButton = ({ bookingId }) => {
 
   return (
     <div className="space-y-4">
-      {/* Primary SOS button — only shown before confirmation flow and before facilities load */}
-      {!showConfirm && facilities.length === 0 && (
+      {/* Primary SOS button — only shown before the confirmation flow and before a successful trigger */}
+      {!showConfirm && !triggered && (
         <button
           onClick={() => {
             setShowConfirm(true);
@@ -147,50 +147,27 @@ const EmergencySOSButton = ({ bookingId }) => {
         </div>
       )}
 
-      {/* Nearby facilities panel — shown after a successful SOS trigger */}
-      {facilities.length > 0 && (
+      {/* Success panel with national emergency hotlines — shown after a successful SOS trigger */}
+      {triggered && (
         <div className="bv-card-static p-6 border-emerald-500/20 bg-emerald-500/5 bv-animate-in">
-          <div className="flex items-center gap-2 text-emerald-500 mb-4">
-            <Info size={20} />
-            <h3 className="font-bold text-sm uppercase">Nearby Medical Facilities</h3>
+          <div className="flex items-center gap-2 text-emerald-500 mb-2">
+            <CheckCircle2 size={20} />
+            <h3 className="font-bold text-sm uppercase">SOS Sent — Help Is On The Way</h3>
           </div>
+          <p className="text-sm text-[var(--bv-text)] mb-5">
+            Your host has been alerted via dashboard and SMS. For immediate help, call a national emergency line:
+          </p>
 
-          <div className="space-y-3">
-            {facilities.map((f, i) => {
-              return (
-                <div
-                  key={i}
-                  className="p-3 bg-white/20 rounded-xl border border-emerald-500/10 flex items-center justify-between gap-3"
-                >
-                  <div>
-                    <p className="text-sm font-bold text-[var(--bv-text)]">{f.name}</p>
-                    <p className="text-[10px] text-[var(--bv-text-dim)] uppercase font-bold">
-                      {f.type} · {f.distance}
-                    </p>
-                  </div>
-
-                  {/* Tap-to-call link for immediate dialing */}
-                  <a
-                    href={`tel:${f.phone}`}
-                    className="p-2 rounded-lg bg-emerald-500/20 text-emerald-500 hover:bg-emerald-500 hover:text-white transition"
-                  >
-                    <Phone size={16} />
-                  </a>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Pakistani national emergency hotlines */}
-          <div className="mt-5 grid grid-cols-2 gap-3">
-            <div className="p-3 bg-red-600 rounded-xl text-white text-center">
+          {/* Pakistani national emergency hotlines — tap to dial */}
+          <div className="grid grid-cols-2 gap-3">
+            <a href="tel:1122" className="p-3 bg-red-600 hover:bg-red-700 transition rounded-xl text-white text-center">
               <p className="text-[10px] font-bold opacity-80 uppercase">Ambulance</p>
               <p className="text-lg font-black mt-1">1122</p>
-            </div>
-            <div className="p-3 bg-blue-600 rounded-xl text-white text-center">
+            </a>
+            <a href="tel:15" className="p-3 bg-blue-600 hover:bg-blue-700 transition rounded-xl text-white text-center">
               <p className="text-[10px] font-bold opacity-80 uppercase">Police</p>
               <p className="text-lg font-black mt-1">15</p>
-            </div>
+            </a>
           </div>
         </div>
       )}

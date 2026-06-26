@@ -62,7 +62,8 @@ const userAndHostSchema = new mongoose.Schema({
   password: {
     type: String,
     required: true,
-    minlength: [6, 'Password must be at least 6 characters']
+    select: false,
+    minlength: [8, 'Password must be at least 8 characters']
   },
 
   dob: {
@@ -187,33 +188,43 @@ const userAndHostSchema = new mongoose.Schema({
   },
 
   // ── OTP Fields (for post-registration verification) ──
+  // select: false on all secrets — defense in depth so a forgotten projection
+  // can never leak hashes. Reads must opt in explicitly with .select('+field').
   otpHash: {
-    type: String
+    type: String,
+    select: false
   },
   otpExpiresAt: {
-    type: Date
+    type: Date,
+    select: false
   },
   phoneOtpHash: {
-    type: String
+    type: String,
+    select: false
   },
   phoneOtpExpiresAt: {
-    type: Date
+    type: Date,
+    select: false
   },
 
   // ── Password Reset ──
   passwordResetTokenHash: {
-    type: String
+    type: String,
+    select: false
   },
   passwordResetExpiresAt: {
-    type: Date
+    type: Date,
+    select: false
   },
 
   // ── Auth Tokens ──
   refreshTokenHash: {
-    type: String
+    type: String,
+    select: false
   },
   refreshTokenExpiresAt: {
-    type: Date
+    type: Date,
+    select: false
   },
 
   // ── Trust Score (0-100) ──

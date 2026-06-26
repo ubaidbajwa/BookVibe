@@ -1,9 +1,14 @@
+import hmac
+import ipaddress
 import logging
+import socket
+from urllib.parse import urlparse
+
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from config import settings
 from providers import (
@@ -24,8 +29,76 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,
     allow_methods=["POST", "GET"],
-    allow_headers=["Content-Type", "Authorization"],
+    allow_headers=["Content-Type", "Authorization", "X-Internal-Key"],
 )
+
+
+# --- Internal authentication (shared secret with the Node backend) ---
+
+async def verify_internal_key(x_internal_key: Optional[str] = Header(default=None)):
+    """
+    Enforces the shared-secret header on verification endpoints.
+
+    When INTERNAL_API_KEY is configured, requests must carry a matching
+    `X-Internal-Key` header (constant-time compared). This stops the service
+    from being driven directly even if its port is exposed — CORS only guards
+    browsers, not server-to-server or scripted callers.
+
+    Args:
+        x_internal_key (Optional[str]): The caller-supplied secret header.
+
+    Raises:
+        HTTPException: 401 if the key is required but missing/incorrect.
+    """
+    expected = settings.INTERNAL_API_KEY
+    if not expected:
+        # Not configured (local dev) — allow, but the deployment is unprotected.
+        return
+    if not x_internal_key or not hmac.compare_digest(x_internal_key, expected):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+# --- SSRF guard for outbound image fetches ---
+
+def _is_safe_public_url(url: str) -> bool:
+    """
+    Returns True only for http(s) URLs whose host resolves exclusively to
+    public IP addresses. Blocks loopback, private, link-local (incl. the
+    169.254.169.254 cloud-metadata endpoint), reserved, and multicast targets
+    to prevent SSRF via the user-supplied image URLs.
+
+    Args:
+        url (str): The URL to validate.
+
+    Returns:
+        bool: True if the URL is safe to fetch.
+    """
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return False
+
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return False
+
+    try:
+        infos = socket.getaddrinfo(parsed.hostname, None)
+    except Exception:
+        return False
+
+    for info in infos:
+        ip = info[4][0]
+        try:
+            addr = ipaddress.ip_address(ip)
+        except ValueError:
+            return False
+        if (
+            addr.is_private or addr.is_loopback or addr.is_link_local
+            or addr.is_reserved or addr.is_multicast or addr.is_unspecified
+        ):
+            return False
+
+    return True
 
 
 # --- Provider factory (Strict Factory Pattern) ---
@@ -107,13 +180,23 @@ async def download_image(url: str) -> bytes:
         bytes: The raw content of the image.
 
     Raises:
-        HTTPException: If the download fails or returns a non-200 status.
+        HTTPException: If the URL is unsafe, or the download fails / returns a
+            non-200 status.
     """
+    # SSRF guard — reject internal/metadata targets before making any request.
+    if not _is_safe_public_url(url):
+        logger.warning(f"Blocked unsafe image URL: {url}")
+        raise HTTPException(status_code=400, detail="Image URL is not allowed")
+
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
+        # follow_redirects stays False so a public URL cannot redirect into an
+        # internal address after passing the guard above.
+        async with httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
             response = await client.get(url)
             response.raise_for_status()
             return response.content
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to download image from {url}: {e}")
         raise HTTPException(status_code=400, detail=f"Image download failed: {url}")
@@ -193,7 +276,7 @@ async def health():
     }
 
 
-@app.post("/verify-cnic")
+@app.post("/verify-cnic", dependencies=[Depends(verify_internal_key)])
 async def verify_cnic(req: VerificationRequest):
     """
     Performs OCR and verification on a CNIC image.
@@ -236,7 +319,7 @@ async def verify_cnic(req: VerificationRequest):
     }
 
 
-@app.post("/face-match")
+@app.post("/face-match", dependencies=[Depends(verify_internal_key)])
 async def face_match(req: FaceMatchRequest):
     """
     Compares a selfie against a CNIC photo.
@@ -269,7 +352,7 @@ async def face_match(req: FaceMatchRequest):
     }
 
 
-@app.post("/liveness-check")
+@app.post("/liveness-check", dependencies=[Depends(verify_internal_key)])
 async def liveness_check(req: LivenessRequest):
     """
     Performs a liveness check on a selfie.
@@ -299,7 +382,7 @@ async def liveness_check(req: LivenessRequest):
     }
 
 
-@app.post("/liveness/create-session")
+@app.post("/liveness/create-session", dependencies=[Depends(verify_internal_key)])
 async def create_liveness_session():
     """
     Creates an Amazon Rekognition Face Liveness session.
@@ -327,7 +410,7 @@ async def create_liveness_session():
     }
 
 
-@app.post("/liveness/session-result")
+@app.post("/liveness/session-result", dependencies=[Depends(verify_internal_key)])
 async def liveness_session_result(req: LivenessSessionResultRequest):
     """
     Fetches the result of a completed Face Liveness session.
