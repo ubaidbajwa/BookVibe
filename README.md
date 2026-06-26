@@ -86,7 +86,8 @@ The platform is composed of **three independent services** that communicate over
 - JWT auth · Nodemailer (transactional email) · Web Push · Twilio (SMS)
 
 **Verification Microservice**
-- Python · FastAPI · OCR / face-recognition / liveness pipeline
+- Python · FastAPI
+- **Google Cloud Vision** (CNIC OCR) · **AWS Rekognition** (face match) · **Amazon Rekognition Face Liveness** (interactive liveness challenge)
 
 ---
 
