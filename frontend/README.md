@@ -1,16 +1,63 @@
-# React + Vite
+# BookVibe — Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+The web client for **BookVibe**, a property-booking platform. Built with **React 19 + Vite 7**, using Redux Toolkit for state, Tailwind CSS v4 for styling, and React Router 7 for routing. It talks to the BookVibe Express API and receives real-time updates over Socket.io.
 
-Currently, two official plugins are available:
+## Tech stack
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- **React 19** + **Vite 7** (SPA)
+- **Redux Toolkit** — `auth`, `accommodation`, and `booking` slices
+- **Tailwind CSS v4**
+- **React Router 7** — lazy-loaded routes with role-based guards (guest / host / admin)
+- **Axios** — shared instance with automatic token refresh
+- **Socket.io client** — live notifications and events
 
-## React Compiler
+## Requirements
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- Node.js 18+
+- The BookVibe backend API running (see `../backend`)
 
-## Expanding the ESLint configuration
+## Setup
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+```bash
+npm install
+```
+
+Create a `.env` file in this folder (see `.env.example` at the repo root for the full list):
+
+```env
+VITE_API_URL=http://localhost:3000
+VITE_ADMIN_PATH=your-secret-admin-path
+```
+
+- `VITE_API_URL` — base URL of the backend API.
+- `VITE_ADMIN_PATH` — secret URL segment that gates the admin panel. **Never hardcode this.**
+
+> All frontend env vars must be prefixed with `VITE_` to be exposed to the app.
+
+## Scripts
+
+```bash
+npm run dev      # start the Vite dev server (http://localhost:5173)
+npm run host     # dev server exposed on the local network (vite --host)
+npm run build    # production build
+npm run preview  # preview the production build locally
+npm run lint     # run ESLint
+```
+
+## Project structure
+
+```
+src/
+  pages/        route-level screens (public, guest, host/, admin/)
+  components/   reusable UI components
+  redux/        store, slices (auth, accommodation, booking)
+  hooks/        custom hooks (e.g. useSocket)
+  utils/        axios config, socket, helpers
+```
+
+## Notes
+
+- API calls go through the shared axios instance in `src/utils/authConfig.js`, which transparently refreshes the access token on `401` and retries the request once.
+- Protected routes wait for auth to hydrate before redirecting, to avoid false `/login` flashes.
+
+Part of the BookVibe project — see the repository root for the backend and Python verification service.

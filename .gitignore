@@ -3,8 +3,38 @@
 **/.venv/
 python-verification-service/.venv/
 **/__pycache__/
+**/*.pyc
+**/*.pyo
+
+# Env files — never commit real secrets; only the example is allowed
 **/.env
+**/.env.*
 !.env.example
+!**/.env.example
+
+# Build / compiled output
+**/dist/
+**/build/
+**/dist-ssr/
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# Local tooling
+.claude/
+.claude-flow/
+
 **/update images/
 **/images/
 **/claude/
