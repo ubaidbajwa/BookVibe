@@ -1,277 +1,344 @@
-<div align="center">
+# BookVibe
 
-# 🏨 BookVibe
+A property-booking platform for Pakistan, built as a final-year project.
 
-### A Full-Stack Property Booking Platform with AI-Powered Identity Verification
+BookVibe connects guests looking for short- and long-term stays with hosts who
+list rooms, apartments, houses, hotels, and hostels. It handles the full booking
+lifecycle: searching listings, booking with either cash-on-arrival or a Stripe
+card payment held in escrow, host payouts after a platform commission, guest and
+host identity verification against the Pakistani CNIC, reviews, complaints, and
+an admin panel for moderation and payout approval. It is a solo project and is
+not deployed publicly.
 
-*Discover, book, and manage premium stays across Pakistan — with secure escrow payments, real-time notifications, and Pakistani CNIC-based KYC verification.*
+There is no hosted demo yet. Running it requires setting up the three services
+below plus external accounts (MongoDB, Cloudinary, Stripe, and — for identity
+verification — Google Cloud Vision and AWS Rekognition).
 
-![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white)
-![Node.js](https://img.shields.io/badge/Node.js-Express_5-339933?logo=node.js&logoColor=white)
-![MongoDB](https://img.shields.io/badge/MongoDB-Mongoose_8-47A248?logo=mongodb&logoColor=white)
-![FastAPI](https://img.shields.io/badge/FastAPI-Python-009688?logo=fastapi&logoColor=white)
-![Stripe](https://img.shields.io/badge/Payments-Stripe-635BFF?logo=stripe&logoColor=white)
-![Socket.io](https://img.shields.io/badge/Realtime-Socket.io-010101?logo=socket.io&logoColor=white)
-![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-v4-06B6D4?logo=tailwindcss&logoColor=white)
-![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)
+## Contents
 
-</div>
+- [Architecture](#architecture)
+- [Tech stack](#tech-stack)
+- [Screenshots](#screenshots)
+- [Features by role](#features-by-role)
+- [Getting started](#getting-started)
+- [Environment variables](#environment-variables)
+- [API overview](#api-overview)
+- [Project structure](#project-structure)
+- [Status and known limitations](#status-and-known-limitations)
 
----
+## Architecture
 
-## 📖 Overview
+Three independent services communicate over HTTP and WebSockets:
 
-**BookVibe** is a production-grade, full-stack property-booking platform built as a Final Year Project. It connects **guests** looking for short- and long-term stays with **hosts** listing rooms, apartments, houses, hotels, and hostels — backed by a complete **escrow payment system**, an **AI-powered identity-verification pipeline** for Pakistani CNICs, and a comprehensive **admin control panel**.
+```
+                +-------------------------------+
+  Browser  <--->|  Frontend (React SPA, Vite)   |
+                +-------------------------------+
+                     |  REST /api/v1  +  Socket.io
+                     v
+                +-------------------------------+       +-------------------+
+                |  Backend (Express 5 API)      |<----->|  MongoDB (Atlas)  |
+                |  auth, bookings, payments,    |       +-------------------+
+                |  escrow, notifications        |
+                +-------------------------------+
+                   |            |             |
+     Stripe  <-----+            |             +-----> Cloudinary (image storage)
+   (checkout +                  |
+    webhooks)                   v
+                +-------------------------------+       +------------------------+
+                |  Verification service         |<----->|  Google Cloud Vision   |
+                |  (FastAPI, Python)            |       |  AWS Rekognition       |
+                |  CNIC OCR / face / liveness   |       +------------------------+
+                +-------------------------------+
+```
 
-The platform is composed of **three independent services** that communicate over HTTP and WebSockets:
+- **Frontend** is a single-page app. All API calls go through a shared Axios
+  instance that silently refreshes the access token on a 401 and replays the
+  request. State lives in Redux Toolkit (`auth`, `accommodation`, `booking`
+  slices). Socket.io delivers live notifications.
+- **Backend** is the source of truth. It owns authentication, business rules,
+  Stripe checkout and webhook handling, escrow accounting, and all Socket.io and
+  Web Push notifications. Uploaded images are streamed to Cloudinary; only the
+  URL and `public_id` are stored in MongoDB.
+- **Verification service** is called only by the backend (server-to-server,
+  guarded by a shared-secret header). It never performs OCR or face matching for
+  the browser directly. The one browser-facing piece is AWS Face Liveness: the
+  backend creates a session, the browser streams the video challenge to AWS via
+  the Amplify SDK, and the backend fetches the result.
 
-| Service | Stack | Responsibility |
-|---------|-------|----------------|
-| **Backend API** | Express 5 · Mongoose 8 · Socket.io · Stripe | REST API, auth, payments, real-time events, business logic |
-| **Frontend SPA** | React 19 · Vite 7 · Redux Toolkit · Tailwind CSS v4 | Guest, host, and admin user interfaces |
-| **Verification Service** | FastAPI (Python) | CNIC OCR, face matching, and liveness detection |
+Authentication is a dual-token flow. A short-lived access token (default 15 min)
+is sent as an `Authorization: Bearer` header or a `token` cookie. A long-lived
+refresh token (default 7 days) is stored as a SHA-256 hash on the user document
+and sent as an httpOnly cookie; `POST /api/v1/user/refresh` rotates it. Roles
+(`guest`, `host`, `admin`) all live in one `UserAndHost` collection and are
+enforced per route. Admin data routes require a second factor on top of the
+role: a server-verified 6-digit PIN that issues a short-lived gate token.
 
----
-
-## ✨ Key Features
-
-### 👤 For Guests
-- **Smart property discovery** — search and filter by city, type, stay duration, and price range, with category browsing and geolocation-based "near you" suggestions.
-- **Smart pricing tiers** — automatic nightly / weekly / monthly rate selection with savings highlighted.
-- **Flexible booking** — choose **Pay on Arrival (cash)** or **Stripe card payment**, add concierge services and a pre-ordered meal plan, and review a transparent cost breakdown.
-- **Identity verification** — secure CNIC + selfie KYC powered by OCR, face matching, and liveness detection.
-- **Reviews, wishlists & comparisons** — leave verified-stay reviews, save favourites, and compare up to 3 properties side-by-side.
-- **In-stay services** — order food, request concierge services, and trigger an **Emergency SOS** that instantly alerts the host.
-- **Complaints & support** — file complaints with evidence and chat with both the other party and an admin.
-
-### 🏠 For Hosts
-- **Listing management** — create and manage single- and multi-unit properties (hotels/hostels with individual rooms), house rules, cancellation policies, and damage deposits.
-- **Earnings dashboard** — visualise monthly revenue, bookings, and net take-home after the platform commission.
-- **Escrow payouts** — register bank / Easypaisa / JazzCash details, get verified by an admin, and request payouts.
-- **Booking & guest management** — confirm cash payments, manage refunds, and view guest identity snapshots.
-- **Concierge & food menus** — offer add-on services and per-property food menus.
-
-### 🛡️ For Admins
-- **Two-factor admin panel** — a secret admin path **plus a server-enforced 6-digit PIN gate**.
-- **KYC review queue** — manually approve or reject identity verifications.
-- **User & host management** — block, unblock, or remove users and verify hosts.
-- **Payout & refund processing** — approve host payouts and process guest refunds (with Stripe integration).
-- **Complaint resolution** — mediate disputes, issue warnings, and **blacklist** offenders by CNIC / email / phone.
-- **Analytics dashboard** — platform-wide revenue, growth, and activity metrics.
-
----
-
-## 🏗️ Architecture Highlights
-
-- **Escrow + commission model** — guest payments are held by the platform; a **10% commission** is deducted at payout time. Failed/abandoned Stripe checkouts are auto-released so dates never get stuck.
-- **Dual-token authentication** — short-lived access tokens (15 min) + long-lived refresh tokens (7 days, stored as SHA-256 hashes) with transparent silent refresh.
-- **Secure payments** — Stripe Checkout with **signature-verified webhooks**, atomic idempotency, and a server-side verification fallback. Prices are **always recomputed server-side** — the client can never set its own total.
-- **Real-time everything** — Socket.io rooms per user/host/admin deliver live notifications, plus **Web Push** (VAPID) for delivery even when the site is closed.
-- **AI identity verification** — the FastAPI microservice extracts CNIC fields (number, name, father's name, gender, DOB, address) via **Google Cloud Vision**, matches the face against the CNIC photo via **AWS Rekognition**, and runs **Amazon Rekognition Face Liveness** (an interactive video challenge — the verified-live frame becomes the selfie that's matched to the CNIC), feeding a **trust score**.
-- **Trust & safety** — risk-based security deposits, a permanent blacklist, and host/guest CNIC snapshots captured at booking time.
-
----
-
-## 🧰 Tech Stack
+## Tech stack
 
 **Frontend**
-- React 19 · Vite 7 · React Router 7
-- Redux Toolkit (auth, accommodation, booking slices)
-- Tailwind CSS v4 · Lucide icons · Leaflet maps
-- Axios (shared instance with auto token-refresh) · Socket.io client
+- React 19, Vite 7, React Router 7
+- Redux Toolkit + React Redux
+- Tailwind CSS v4, Lucide / React Icons, Framer Motion
+- Leaflet + React Leaflet (maps)
+- Axios, Socket.io client
+- AWS Amplify UI (`@aws-amplify/ui-react-liveness`) for the Face Liveness widget
+- Stripe.js / React Stripe.js
 
 **Backend**
-- Node.js · Express 5 (ESM) · Mongoose 8 (MongoDB)
-- Socket.io · Stripe · Cloudinary (image storage)
-- JWT auth · Nodemailer (transactional email) · Web Push · Twilio (SMS)
+- Node.js (ESM), Express 5, Mongoose 8 (MongoDB)
+- Socket.io, Stripe, Cloudinary
+- JWT (`jsonwebtoken`), bcrypt, Helmet, `express-rate-limit`, `express-fileupload`
+- Nodemailer (Gmail transactional email), `web-push` (VAPID), Twilio (SMS — optional)
+- `node-cron` (daily admin digest), `ioredis` (optional)
 
-**Verification Microservice**
-- Python · FastAPI
-- **Google Cloud Vision** (CNIC OCR) · **AWS Rekognition** (face match) · **Amazon Rekognition Face Liveness** (interactive liveness challenge)
+**Verification service (Python)**
+- FastAPI + Uvicorn, Pydantic
+- `google-cloud-vision` — CNIC OCR
+- `boto3` — AWS Rekognition (face match, `detect_faces` quality check, and active
+  Face Liveness sessions)
 
----
+## Screenshots
 
-## 🚀 Getting Started
+No screenshots are committed yet. The `docs/screenshots/` folder is set up with
+the intended file names and a capture guide (`docs/screenshots/README.md`).
 
-> There is no root-level package manager — each service is run from its own directory.
+Once the images are added, uncomment the block below in this file:
+
+<!--
+| | |
+|---|---|
+| ![Home & property search](docs/screenshots/01-home.png) | ![Property detail with pricing](docs/screenshots/02-property-detail.png) |
+| ![Booking & payment](docs/screenshots/03-booking-checkout.png) | ![Identity verification (CNIC + liveness)](docs/screenshots/04-kyc-verification.png) |
+| ![Guest bookings](docs/screenshots/05-my-bookings.png) | ![Host dashboard & earnings](docs/screenshots/06-host-dashboard.png) |
+| ![Add / manage listing](docs/screenshots/07-add-property.png) | ![Admin dashboard & analytics](docs/screenshots/08-admin-dashboard.png) |
+-->
+
+## Features by role
+
+Derived from the routes and controllers, not aspiration.
+
+**Guest**
+- Browse and search listings by city, type, dates, and price; compare up to three
+  side by side; save to a wishlist.
+- Book a stay with a transparent cost breakdown, choosing cash-on-arrival or
+  Stripe card payment. Optionally add concierge services and a pre-ordered meal.
+- Complete identity verification: CNIC OCR, face match against the CNIC photo,
+  and an active liveness challenge.
+- Leave a review after a completed stay, file complaints with evidence, and use an
+  in-stay emergency SOS that alerts the host.
+- Manage profile, settings, notification preferences, and account
+  deactivation/deletion.
+
+**Host**
+- Create and manage listings, including multi-unit properties (hotels/hostels with
+  individual rooms), house rules, cancellation policy, and damage deposits.
+- View a bookings dashboard and earnings summary; confirm cash payments; release
+  or claim security deposits; handle refund requests.
+- Publish a per-property food menu and concierge services, and process their
+  orders.
+- Register bank / Easypaisa / JazzCash payout details and request payouts once an
+  admin verifies them.
+
+**Admin** (behind a secret path + a server-enforced PIN gate)
+- Dashboard stats and platform analytics.
+- User management: list, block/unblock, delete; verify hosts and properties.
+- KYC review queue: approve or reject identity submissions.
+- Complaint moderation with a message thread to both parties.
+- Blacklist management by CNIC / email / phone.
+- Payout processing and guest refund processing (including Stripe refunds).
+
+## Getting started
+
+There is no root-level package manager. Each service is installed and run from
+its own directory.
 
 ### Prerequisites
-- Node.js 18+ and npm
+- Node.js 20+ and npm
 - Python 3.10+
 - A MongoDB instance (local or Atlas)
-- Accounts/keys for Stripe, Cloudinary, and Gmail (app password)
+- Accounts/keys: Cloudinary, Stripe, and a Gmail app password. Identity
+  verification additionally needs Google Cloud Vision and AWS Rekognition
+  credentials (the app runs without them, but verification calls will fail).
 
-### 1️⃣ Backend (API — port `3000`)
+### 1. Clone
+
+```bash
+git clone <your-repo-url> bookvibe
+cd bookvibe
+```
+
+### 2. Backend (API — http://localhost:3000)
+
 ```bash
 cd backend
 npm install
-# create a .env file (see "Environment Variables" below)
-npm run dev          # node index.js
+cp .env.example .env      # then fill in the values (see below)
+npm run dev               # runs node index.js (no watch; restart after changes)
 ```
 
-### 2️⃣ Frontend (SPA — port `5173`)
+### 3. Frontend (SPA — http://localhost:5173)
+
 ```bash
 cd frontend
 npm install
-# create a .env file with VITE_API_URL and VITE_ADMIN_PATH
-npm run dev          # local
-npm run host         # expose on LAN
-npm run build        # production build
+cp .env.example .env      # set VITE_API_URL and VITE_ADMIN_PATH
+npm run dev               # local dev server
+# npm run host            # expose on the LAN
+# npm run build           # production build
 ```
 
-### 3️⃣ Verification Service (port `5001`)
+### 4. Verification service (http://localhost:5001)
+
 ```bash
 cd python-verification-service
 python -m venv venv
-venv\Scripts\activate          # Windows
+venv\Scripts\activate           # Windows
+# source venv/bin/activate      # macOS / Linux
 pip install -r requirements.txt
+cp .env.example .env             # add AWS + Google credentials
 python main.py
 ```
 
----
+### Docker (all three services)
 
-## 🔑 Environment Variables
-
-**`backend/.env`**
-```env
-PORT=3000
-NODE_ENV=development
-MONGO_URL=your_mongodb_connection_string
-
-# Auth
-ACCESS_TOKEN_SECRET_KEY=...
-REFRESH_TOKEN_SECRET_KEY=...
-JWT_SECRET_KEY=...
-ACCESS_TOKEN_EXPIRES_IN=15m
-REFRESH_TOKEN_EXPIRES_IN=7d
-
-# Cloudinary (image uploads)
-CLOUDINARY_CLOUD_NAME=...
-CLOUDINARY_API_KEY=...
-CLOUDINARY_API_SECRET=...
-
-# Clients (CORS allowlist)
-CLIENT_URL=http://localhost:5173
-CLIENT_URLS=http://localhost:5173
-
-# Email (Gmail app password)
-MY_EMAIL=...
-EMAIL_APP_PASSWORD=...
-
-# Payments
-STRIPE_SECRET_KEY=...
-STRIPE_WEBHOOK_SECRET=...
-
-# Identity verification microservice
-PYTHON_VERIFY_URL=http://localhost:5001
-
-# Admin & Web Push
-ADMIN_PIN=000000
-VAPID_PUBLIC_KEY=...
-VAPID_PRIVATE_KEY=...
-VAPID_SUBJECT=mailto:admin@example.com
-```
-
-**`frontend/.env`**
-```env
-VITE_API_URL=http://localhost:3000/api/v1
-VITE_ADMIN_PATH=your-secret-admin-path
-
-# AWS Face Liveness (browser) — see AWS_FACE_LIVENESS_SETUP.md
-VITE_AWS_REGION=us-east-1
-VITE_COGNITO_IDENTITY_POOL_ID=us-east-1:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-```
-
----
-
-## 🐳 Docker Deployment
-
-All three services are containerized and orchestrated with **Docker Compose** for single-host (e.g. AWS EC2) deployment. **Nginx** serves the React build and reverse-proxies `/api` and `/socket.io` to the backend, so the whole stack runs behind a single port.
-
-```
-Internet ──:80──> Nginx (frontend) ──/api──────────┐
-                                   ──/socket.io──> backend:3000 ──> verification:5001
-```
-
-| Container | Image | Role |
-|-----------|-------|------|
-| `frontend` | Nginx | Serves the SPA + reverse-proxies the backend |
-| `backend` | Node 20 | REST API, Socket.io, Stripe webhook |
-| `verification` | Python 3.11 + FastAPI | CNIC OCR / face match / liveness |
-
-MongoDB (Atlas), Cloudinary, and Stripe remain external services.
+A `docker-compose.yml` builds and runs all three behind Nginx for single-host
+deployment. See `DOCKER.md` for the full setup, including the Stripe webhook and
+AWS EC2 notes.
 
 ```bash
-# from the project root
-cp .env.example .env          # set VITE_ADMIN_PATH (frontend build arg)
-# ensure backend/.env and python-verification-service/.env exist
-
-docker compose build          # first build is slow (Python/TensorFlow image)
-docker compose up -d          # start the full stack
-docker compose logs -f        # tail logs
+cp .env.example .env             # root file — sets the frontend build args
+# ensure backend/.env and python-verification-service/.env also exist
+docker compose build             # first build is slow
+docker compose up -d
 ```
 
-Open **http://localhost** (or your server's IP). For production env values, the Stripe webhook setup, HTTPS/TLS, and full AWS EC2 steps, see **[`DOCKER.md`](./DOCKER.md)**.
+## Environment variables
 
----
+Each service has its own `.env.example` — copy it to `.env` and fill it in. Never
+commit a real `.env`; the `.gitignore` allows only `*.env.example`.
 
-## 📂 Project Structure
+**`backend/.env`** — MongoDB, JWT secrets and token lifetimes, Cloudinary, the
+CORS client allowlist, Gmail credentials, Stripe secret + webhook secret, the
+verification service URL and shared key, the admin PIN, and Web Push (VAPID)
+keys. Twilio and Redis are optional. See `backend/.env.example` for the full
+annotated list.
+
+**`frontend/.env`** — `VITE_API_URL` (must include the `/api/v1` suffix, e.g.
+`http://localhost:3000/api/v1`), `VITE_ADMIN_PATH` (the secret admin route
+segment), and the AWS region + Cognito Identity Pool used by the browser Face
+Liveness widget. See `frontend/.env.example`.
+
+**`python-verification-service/.env`** — AWS credentials + region, the path to a
+Google service-account JSON, the CORS allowlist (backend origin only), the shared
+`INTERNAL_API_KEY`, and the decision thresholds. See its `.env.example`.
+
+## API overview
+
+All backend routes are mounted under `/api/v1`. The Stripe webhook is mounted
+before the JSON body parser because signature verification needs the raw body.
+Auth column: **Public** = none; **Auth** = any logged-in user; **Guest / Host /
+Admin** = that role; **Admin+PIN** = admin role plus the PIN gate token.
+
+| Method | Path | Description | Auth |
+|--------|------|-------------|------|
+| GET | `/health` | Service health check | Public |
+| POST | `/api/v1/user/register-user` | Register a new user | Public |
+| POST | `/api/v1/user/send-email-otp` | Send pre-registration email OTP | Public |
+| POST | `/api/v1/user/login` | Log in (rate-limited) | Public |
+| POST | `/api/v1/user/forgot-password` / `/reset-password/:token` | Password reset | Public |
+| POST | `/api/v1/user/refresh` | Rotate the refresh token | Cookie |
+| POST | `/api/v1/user/logout` | Log out | Public |
+| GET | `/api/v1/user/me` | Current user profile | Auth |
+| PUT | `/api/v1/user/update-profile` / `update-password` / `settings` | Update account | Auth |
+| GET | `/api/v1/property` | List / search / filter properties | Public |
+| GET | `/api/v1/property/:id` | Property detail | Public |
+| POST | `/api/v1/property/add-property` | Create a listing | Host |
+| PUT / DELETE | `/api/v1/property/:id` | Update / delete a listing | Host |
+| PATCH | `/api/v1/property/:id/toggle-availability` | Toggle availability | Host |
+| POST | `/api/v1/booking/create-booking` | Create a booking (rate-limited) | Guest/Host |
+| POST | `/api/v1/booking/check-availability` | Check date availability | Auth |
+| GET | `/api/v1/booking/my-bookings` | Guest's bookings | Guest/Host |
+| GET | `/api/v1/booking/:id` | Booking detail | Auth |
+| POST | `/api/v1/booking/:id/cancel` / `:id/verify-payment` | Cancel / verify Stripe payment | Guest/Host |
+| GET | `/api/v1/booking/host/all-bookings` / `dashboard-stats` / `earnings` | Host booking views | Host |
+| PATCH | `/api/v1/booking/host/:id/confirm-cash` / `release-deposit` / `claim-deposit` | Host booking actions | Host |
+| GET / PATCH | `/api/v1/booking/admin/all-bookings` / `refunds` / `refund/:id` | Admin booking + refund mgmt | Admin+PIN |
+| POST | `/api/v1/verify/cnic-ocr` / `face-match` / `liveness` | Pre-registration KYC previews (rate-limited) | Public |
+| POST | `/api/v1/verify/liveness/session` / `session-result` | Face Liveness session lifecycle | Public |
+| POST | `/api/v1/verify/kyc/full` / `resubmit` | Full KYC pipeline for a user | Auth |
+| POST / GET | `/api/v1/host-payments/payment-info` | Save / read payout details | Host |
+| GET | `/api/v1/host-payments/earnings` / `payouts` | Earnings + payout history | Host |
+| POST | `/api/v1/host-payments/request-payout` | Request a payout | Host |
+| GET / PATCH | `/api/v1/host-payments/admin/payouts` / `payouts/:id` / `verify/:hostId` | Admin payout processing | Admin+PIN |
+| POST / GET | `/api/v1/reviews` / `my-reviews` / `property/:id` | Create / list reviews | Mixed |
+| POST / GET | `/api/v1/wishlist/toggle` / `my` | Wishlist | Auth |
+| POST / GET | `/api/v1/complaints` / `my` / `against-me` | File / view complaints | Auth |
+| GET / POST / PUT / DELETE | `/api/v1/foodmenu/*` | Food menu + orders | Mixed |
+| POST | `/api/v1/concierge/order-service` / `add-service` | Concierge services | Mixed |
+| POST | `/api/v1/emergency/sos` | Trigger emergency SOS | Auth |
+| GET / PATCH / DELETE | `/api/v1/notifications/*` | Notifications | Auth |
+| GET / POST | `/api/v1/push/vapid-public-key` / `subscribe` / `unsubscribe` | Web Push subscriptions | Auth |
+| POST | `/api/v1/user/admin/verify-pin` | Exchange the admin PIN for a gate token | Admin |
+| GET | `/api/v1/user/admin/stats` / `analytics` / `all-users` / `all-hosts` | Admin dashboards | Admin+PIN |
+| PATCH / DELETE | `/api/v1/user/admin/block/:id` / `verify-host/:id` / `verify-kyc/:id` | Admin moderation | Admin+PIN |
+| GET / POST / DELETE | `/api/v1/user/admin/blacklist` | Blacklist management | Admin+PIN |
+| POST | `/api/v1/webhook/stripe` | Stripe webhook (raw body, signature-verified) | Stripe |
+
+This is a representative subset; the exact handlers live in `backend/routers/`.
+
+## Project structure
 
 ```
-BookVibe/
-├── backend/                    # Express 5 + Mongoose REST API
-│   ├── controllers/            # Route handlers (booking, user, admin, payments…)
-│   ├── models/                 # Mongoose schemas
-│   ├── routers/                # Express routers (mounted under /api/v1)
-│   ├── services/               # Business logic (booking, payment, notifications)
-│   ├── middlewares/            # Auth, admin gate, Cloudinary, email templates
-│   ├── config/                 # Socket.io & Redis setup
-│   ├── Dockerfile              # Backend container image
-│   └── index.js                # App entry point
+bookvibe/
+├── backend/                      # Express 5 + Mongoose REST API (ESM)
+│   ├── controllers/              # Request handlers
+│   ├── models/                   # Mongoose schemas (UserAndHost, Property, Booking, Payout, …)
+│   ├── routers/                  # Express routers, mounted under /api/v1
+│   ├── services/                 # Stripe, notifications, and other business logic
+│   ├── middlewares/              # Auth, admin PIN gate, Cloudinary, email templates
+│   ├── utils/                    # Tokens, cron, verification-service client
+│   ├── config/                   # DB, Socket.io, Redis
+│   └── index.js                  # App entry point + middleware order
 │
-├── frontend/                   # React 19 + Vite SPA
-│   ├── Dockerfile              # Multi-stage build → served by Nginx
-│   ├── nginx.conf              # SPA + reverse proxy to the backend
-│   └── src/
-│       ├── pages/              # Guest, host/, and admin/ pages
-│       ├── components/         # Shared UI + providers
-│       ├── redux/              # Store & slices
-│       ├── hooks/              # useSocket and others
-│       └── utils/              # Axios config, pricing, helpers
+├── frontend/                     # React 19 + Vite SPA
+│   ├── src/
+│   │   ├── pages/                # Guest, host/, and admin/ pages (lazy-loaded)
+│   │   ├── components/           # Shared UI and providers
+│   │   ├── redux/                # Store and slices
+│   │   ├── hooks/                # useSocket and others
+│   │   └── utils/                # Axios config, pricing, Web Push
+│   ├── nginx.conf                # SPA serving + reverse proxy (Docker)
+│   └── Dockerfile
 │
-├── python-verification-service/  # FastAPI CNIC OCR / face match / liveness
-│   └── Dockerfile              # Verification service container image
+├── python-verification-service/  # FastAPI: CNIC OCR / face match / liveness
+│   ├── main.py                   # Endpoints
+│   ├── providers.py              # Google Vision + AWS Rekognition providers
+│   └── config.py
 │
-├── docker-compose.yml          # Orchestrates all three services
-└── DOCKER.md                   # Docker & AWS deployment guide
+├── docs/screenshots/             # (screenshots to be added)
+├── docker-compose.yml
+├── DOCKER.md
+└── AWS_FACE_LIVENESS_SETUP.md
 ```
 
----
+## Status and known limitations
 
-## 💳 Payment & Escrow Flow
-
-1. Guest selects **Stripe** at checkout → backend creates a Stripe Checkout Session (PKR) and returns the session URL.
-2. On success, Stripe fires a **signature-verified webhook** → the booking is marked **paid / confirmed** and both parties are notified in real time.
-3. The guest's payment is **held in escrow** by the platform.
-4. The host registers payout details → an admin verifies them → the host requests a payout of `net earnings − already paid` (minimum PKR 500).
-5. A **10% platform commission** is deducted; the admin marks the payout **completed** with a transaction reference.
-6. **Cash ("Pay on Arrival")** is an alternative path the host confirms manually.
-
----
-
-## 🔒 Security
-
-- Server-side price recomputation on every booking (no client-trusted totals).
-- IDOR-safe ownership checks on every guest/host/admin action.
-- Stripe webhook signature verification + idempotency.
-- Dual-token auth with hashed, rotating refresh tokens.
-- **Server-enforced admin PIN gate** as a true second factor (not just a UI redirect).
-- Constant-time admin PIN comparison and per-endpoint role authorization.
-
----
-
-<div align="center">
-
-*Built as a Final Year Project — a complete, real-world full-stack application.*
-
-</div>
+- **No hosted demo.** The app is only runnable locally or via Docker. Deploying
+  it publicly is the single biggest improvement this repo can make.
+- **No automated tests.** There is no test suite; the backend `npm test` is a
+  failing placeholder. Correctness relies on manual testing.
+- **The backend dev server has no file watching.** `npm run dev` is just
+  `node index.js`; restart it manually after backend changes.
+- **Identity verification depends on paid cloud services.** Without Google Cloud
+  Vision and AWS Rekognition credentials configured, CNIC OCR, face matching, and
+  liveness calls fail. The rest of the app still works.
+- **Passive `liveness-check` is a heuristic, not true anti-spoofing.** The
+  robust path is the active AWS Face Liveness challenge; the single-image
+  `detect_faces` quality check is a weaker fallback.
+- **Escrow is application-level accounting, not a regulated escrow account.**
+  Guest payments are held by the platform and paid out after a 10% commission;
+  this is bookkeeping in the database, not a licensed financial arrangement.
+- **Currency is PKR only**, and the CNIC OCR is tuned specifically to the
+  Pakistani national ID format.
+- **No license file yet.** This repository does not currently include a LICENSE.
